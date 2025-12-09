@@ -281,6 +281,16 @@ export class ChatRouter extends RouterBroker {
         });
 
         return res.status(HttpStatus.CREATED).json(response);
+      })
+      .post(this.routerPath('findChannels'), ...guards, async (req, res) => {
+        const response = await this.dataValidate({
+          request: req,
+          schema: contactValidateSchema,
+          ClassRef: Query<Contact>,
+          execute: (instance, query) => chatController.fetchChannels(instance, query as any),
+        });
+
+        return res.status(HttpStatus.OK).json(response);
       });
   }
 

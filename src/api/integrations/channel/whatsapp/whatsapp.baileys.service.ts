@@ -3511,8 +3511,23 @@ export class BaileysStartupService extends ChannelStartupService {
       users: { number: string; jid: string; name?: string }[];
     } = { groups: [], broadcast: [], users: [] };
 
+    const onWhatsapp: OnWhatsAppDto[] = [];
+
     data.numbers.forEach((number) => {
       const jid = createJid(number);
+
+      if (isJidNewsletter(jid)) {
+        onWhatsapp.push(
+          new OnWhatsAppDto(
+            jid,
+            true, // Newsletters are always valid
+            number,
+            undefined, // Can be fetched later if needed
+            'newsletter', // Indicate it's a newsletter type
+          ),
+        );
+        return;
+      }
 
       if (isJidGroup(jid)) {
         jids.groups.push({ number, jid });
@@ -3522,8 +3537,6 @@ export class BaileysStartupService extends ChannelStartupService {
         jids.users.push({ number, jid });
       }
     });
-
-    const onWhatsapp: OnWhatsAppDto[] = [];
 
     // BROADCAST
     onWhatsapp.push(...jids.broadcast.map(({ jid, number }) => new OnWhatsAppDto(jid, false, number)));
@@ -4700,6 +4713,10 @@ export class BaileysStartupService extends ChannelStartupService {
       }
     }
 
+    if (isJidNewsletter(message.key.remoteJid) && message.key.fromMe) {
+      messageRaw.status = status[3]; // DELIVERED MESSAGE TO NEWSLETTER CHANNEL
+    }
+
     return messageRaw;
   }
 
@@ -5117,6 +5134,53 @@ export class BaileysStartupService extends ChannelStartupService {
         currentPage: query.page,
         records: formattedMessages,
       },
+    };
+  }
+  public async fetchChannels(query: Query<Contact>) {
+    const page = Number((query as any)?.page ?? 1);
+    const limit = Number((query as any)?.limit ?? (query as any)?.rows ?? 50);
+    const skip = (page - 1) * limit;
+
+    const messages = await this.prismaRepository.message.findMany({
+      where: {
+        instanceId: this.instanceId,
+        AND: [{ key: { path: ['remoteJid'], not: null } }],
+      },
+      orderBy: { messageTimestamp: 'desc' },
+      select: {
+        key: true,
+        messageTimestamp: true,
+      },
+    });
+
+    const channelMap = new Map<string, { remoteJid: string; pushName: undefined; lastMessageTimestamp: number }>();
+
+    for (const msg of messages) {
+      const key = msg.key as any;
+      const remoteJid = key?.remoteJid as string | undefined;
+      if (!remoteJid || !isJidNewsletter(remoteJid)) continue;
+
+      if (!channelMap.has(remoteJid)) {
+        channelMap.set(remoteJid, {
+          remoteJid,
+          pushName: undefined, // Push name is never stored for channels, so we set it as undefined
+          lastMessageTimestamp: msg.messageTimestamp,
+        });
+      }
+    }
+
+    const allChannels = Array.from(channelMap.values());
+
+    const total = allChannels.length;
+    const pages = Math.ceil(total / limit);
+    const records = allChannels.slice(skip, skip + limit);
+
+    return {
+      total,
+      pages,
+      currentPage: page,
+      limit,
+      records,
     };
   }
 }
