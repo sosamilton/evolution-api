@@ -2432,7 +2432,7 @@ export class BaileysStartupService extends ChannelStartupService {
         }
       }
 
-      const linkPreview = options?.linkPreview !== false;
+      const linkPreview = options?.linkPreview != false ? undefined : false;
 
       let quoted: WAMessage;
 
