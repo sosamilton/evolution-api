@@ -318,7 +318,7 @@ export class EvolutionStartupService extends ChannelStartupService {
 
       let audioFile;
 
-      const messageId = options?.messageId || v4();
+      const messageId = options?.messageId ?? v4();
 
       let messageRaw: any;
 
