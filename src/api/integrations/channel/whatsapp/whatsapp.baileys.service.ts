@@ -128,6 +128,7 @@ import makeWASocket, {
   WAMessageKey,
   WAPresence,
   WASocket,
+  generateMessageIDV2
 } from 'baileys';
 import { Label } from 'baileys/lib/Types/Label';
 import { LabelAssociation } from 'baileys/lib/Types/LabelAssociation';
@@ -1979,6 +1980,13 @@ export class BaileysStartupService extends ChannelStartupService {
     }
   }
 
+  private async generateMessageID() {
+
+    return {
+      id: generateMessageIDV2(this.client.user?.id)
+    };
+  }
+
   private async sendMessage(
     sender: string,
     message: any,
@@ -2242,7 +2250,7 @@ export class BaileysStartupService extends ChannelStartupService {
           mentions,
           linkPreview,
           quoted,
-          null,
+          options.messageId,
           group?.ephemeralDuration,
           // group?.participants,
         );
@@ -2264,7 +2272,7 @@ export class BaileysStartupService extends ChannelStartupService {
           mentions,
           linkPreview,
           quoted,
-          null,
+          options.messageId,
           undefined,
           contextInfo,
         );
@@ -2490,6 +2498,7 @@ export class BaileysStartupService extends ChannelStartupService {
         linkPreview: data?.linkPreview,
         mentionsEveryOne: data?.mentionsEveryOne,
         mentioned: data?.mentioned,
+        messageId: data?.messageId,
       },
       isIntegration,
     );
@@ -2506,6 +2515,7 @@ export class BaileysStartupService extends ChannelStartupService {
         linkPreview: data?.linkPreview,
         mentionsEveryOne: data?.mentionsEveryOne,
         mentioned: data?.mentioned,
+        messageId: data?.messageId,
       },
     );
   }
@@ -2819,6 +2829,7 @@ export class BaileysStartupService extends ChannelStartupService {
         quoted: data?.quoted,
         mentionsEveryOne: data?.mentionsEveryOne,
         mentioned: data?.mentioned,
+        messageId: data?.messageId,
       },
     );
 
@@ -2841,6 +2852,7 @@ export class BaileysStartupService extends ChannelStartupService {
         quoted: data?.quoted,
         mentionsEveryOne: data?.mentionsEveryOne,
         mentioned: data?.mentioned,
+        messageId: data?.messageId,
       },
       isIntegration,
     );
@@ -2857,6 +2869,7 @@ export class BaileysStartupService extends ChannelStartupService {
       quoted: data?.quoted,
       mentionsEveryOne: data?.mentionsEveryOne,
       mentioned: data?.mentioned,
+      messageId: data?.messageId,
     };
 
     if (file) mediaData.media = file.buffer.toString('base64');
@@ -2872,6 +2885,7 @@ export class BaileysStartupService extends ChannelStartupService {
         quoted: data?.quoted,
         mentionsEveryOne: data?.mentionsEveryOne,
         mentioned: data?.mentioned,
+        messageId: data?.messageId,
       },
       isIntegration,
     );
