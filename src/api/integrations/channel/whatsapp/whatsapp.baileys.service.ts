@@ -1981,7 +1981,7 @@ export class BaileysStartupService extends ChannelStartupService {
   }
   public generateMessageID() {
     return {
-      id: generateMessageIDV2(this.client.user?.id)
+      id: generateMessageIDV2(this.client.user?.id),
     };
   }
 
@@ -2248,7 +2248,7 @@ export class BaileysStartupService extends ChannelStartupService {
           mentions,
           linkPreview,
           quoted,
-          optionsoptions?.messageId ?? null,
+          options?.messageId ?? null,
           group?.ephemeralDuration,
           // group?.participants,
         );
