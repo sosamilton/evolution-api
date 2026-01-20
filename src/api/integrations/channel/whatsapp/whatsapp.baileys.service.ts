@@ -978,7 +978,6 @@ export class BaileysStartupService extends ChannelStartupService {
         const contactsMapLidJid = new Map();
 
         for (const contact of contacts) {
-
           let jid = null;
 
           if (contact?.id?.search('@lid') !== -1) {
