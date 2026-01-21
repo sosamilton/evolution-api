@@ -1022,6 +1022,10 @@ export class BaileysStartupService extends ChannelStartupService {
             }
           }
 
+          if (!remoteLid && chat.accountLid.search('@lid') !== -1) {
+            remoteLid = chat.accountLid;
+          }
+
           if (!remoteJid) {
             remoteJid = chat.id;
           }
