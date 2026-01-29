@@ -53,6 +53,10 @@ export class ChatwootService {
   private processedOrderIds: Map<string, number> = new Map();
   private readonly ORDER_CACHE_TTL_MS = 30000; // 30 segundos
 
+  // Cache para mapeamento LID → Número Normal (resolve problema de @lid)
+  private lidToPhoneMap: Map<string, { phone: string; timestamp: number }> = new Map();
+  private readonly LID_CACHE_TTL_MS = 3600000; // 1 hora
+
   constructor(
     private readonly waMonitor: WAMonitoringService,
     private readonly configService: ConfigService,
@@ -636,10 +640,32 @@ export class ChatwootService {
   public async createConversation(instance: InstanceDto, body: any) {
     const isLid = body.key.addressingMode === 'lid';
     const isGroup = body.key.remoteJid.endsWith('@g.us');
-    const phoneNumber = isLid && !isGroup ? body.key.remoteJidAlt : body.key.remoteJid;
-    const { remoteJid } = body.key;
-    const cacheKey = `${instance.instanceName}:createConversation-${remoteJid}`;
-    const lockKey = `${instance.instanceName}:lock:createConversation-${remoteJid}`;
+    let phoneNumber = isLid && !isGroup ? body.key.remoteJidAlt : body.key.remoteJid;
+    let { remoteJid } = body.key;
+
+    // CORREÇÃO LID: Resolve LID para número normal antes de processar
+    if (isLid && !isGroup) {
+      const resolvedPhone = await this.resolveLidToPhone(instance, body.key);
+      
+      if (resolvedPhone && resolvedPhone !== remoteJid) {
+        this.logger.verbose(`LID detected and resolved: ${remoteJid} → ${resolvedPhone}`);
+        phoneNumber = resolvedPhone;
+        
+        // Salva mapeamento se temos remoteJidAlt
+        if (body.key.remoteJidAlt) {
+          this.saveLidMapping(remoteJid, body.key.remoteJidAlt);
+        }
+      } else if (body.key.remoteJidAlt) {
+        // Se não resolveu mas tem remoteJidAlt, usa ele
+        phoneNumber = body.key.remoteJidAlt;
+        this.saveLidMapping(remoteJid, body.key.remoteJidAlt);
+        this.logger.verbose(`Using remoteJidAlt for LID: ${remoteJid} → ${phoneNumber}`);
+      }
+    }
+
+    // Usa phoneNumber como base para cache (não o LID)
+    const cacheKey = `${instance.instanceName}:createConversation-${phoneNumber}`;
+    const lockKey = `${instance.instanceName}:lock:createConversation-${phoneNumber}`;
     const maxWaitTime = 5000; // 5 seconds
     const client = await this.clientCw(instance);
     if (!client) return null;
@@ -2070,6 +2096,29 @@ export class ChatwootService {
         }
       }
 
+      // CORREÇÃO LID: Resolve LID para número normal antes de processar evento
+      if (body?.key?.remoteJid && body.key.remoteJid.includes('@lid') && !body.key.remoteJid.endsWith('@g.us')) {
+        const originalJid = body.key.remoteJid;
+        const resolvedPhone = await this.resolveLidToPhone(instance, body.key);
+        
+        if (resolvedPhone && resolvedPhone !== originalJid) {
+          this.logger.verbose(`Event LID resolved: ${originalJid} → ${resolvedPhone}`);
+          body.key.remoteJid = resolvedPhone;
+          
+          // Salva mapeamento se temos remoteJidAlt
+          if (body.key.remoteJidAlt) {
+            this.saveLidMapping(originalJid, body.key.remoteJidAlt);
+          }
+        } else if (body.key.remoteJidAlt && !body.key.remoteJidAlt.includes('@lid')) {
+          // Se não resolveu mas tem remoteJidAlt válido, usa ele
+          this.logger.verbose(`Using remoteJidAlt for event: ${originalJid} → ${body.key.remoteJidAlt}`);
+          body.key.remoteJid = body.key.remoteJidAlt;
+          this.saveLidMapping(originalJid, body.key.remoteJidAlt);
+        } else {
+          this.logger.warn(`Could not resolve LID for event, keeping original: ${originalJid}`);
+        }
+      }
+
       if (event === 'messages.upsert' || event === 'send.message') {
         this.logger.info(`[${event}] New message received - Instance: ${JSON.stringify(body, null, 2)}`);
         if (body.key.remoteJid === 'status@broadcast') {
@@ -2612,6 +2661,82 @@ export class ChatwootService {
       return remoteJid;
     }
     return remoteJid.replace(/:\d+/, '').split('@')[0];
+  }
+
+  /**
+   * Limpa entradas antigas do cache de mapeamento LID
+   */
+  private cleanLidCache() {
+    const now = Date.now();
+    this.lidToPhoneMap.forEach((value, lid) => {
+      if (now - value.timestamp > this.LID_CACHE_TTL_MS) {
+        this.lidToPhoneMap.delete(lid);
+      }
+    });
+  }
+
+  /**
+   * Salva mapeamento LID → Número Normal
+   */
+  private saveLidMapping(lid: string, phoneNumber: string) {
+    if (!lid || !phoneNumber || !lid.includes('@lid')) {
+      return;
+    }
+    
+    this.cleanLidCache();
+    this.lidToPhoneMap.set(lid, {
+      phone: phoneNumber,
+      timestamp: Date.now(),
+    });
+    
+    this.logger.verbose(`LID mapping saved: ${lid} → ${phoneNumber}`);
+  }
+
+  /**
+   * Resolve LID para Número Normal
+   * Retorna o número normal se encontrado, ou o LID original se não encontrado
+   */
+  private async resolveLidToPhone(instance: InstanceDto, messageKey: any): Promise<string | null> {
+    const { remoteJid, remoteJidAlt } = messageKey;
+    
+    // Se não for LID, retorna o próprio remoteJid
+    if (!remoteJid || !remoteJid.includes('@lid')) {
+      return remoteJid;
+    }
+
+    // 1. Tenta buscar no cache
+    const cached = this.lidToPhoneMap.get(remoteJid);
+    if (cached) {
+      this.logger.verbose(`LID resolved from cache: ${remoteJid} → ${cached.phone}`);
+      return cached.phone;
+    }
+
+    // 2. Se tem remoteJidAlt (número alternativo), usa ele e salva no cache
+    if (remoteJidAlt && !remoteJidAlt.includes('@lid')) {
+      this.saveLidMapping(remoteJid, remoteJidAlt);
+      this.logger.verbose(`LID resolved from remoteJidAlt: ${remoteJid} → ${remoteJidAlt}`);
+      return remoteJidAlt;
+    }
+
+    // 3. Tenta buscar no banco de dados do Chatwoot
+    try {
+      const lidIdentifier = this.normalizeJidIdentifier(remoteJid);
+      const contact = await this.findContactByIdentifier(instance, lidIdentifier);
+      
+      if (contact && contact.phone_number) {
+        // Converte +554498860240 → 554498860240@s.whatsapp.net
+        const phoneNumber = contact.phone_number.replace('+', '') + '@s.whatsapp.net';
+        this.saveLidMapping(remoteJid, phoneNumber);
+        this.logger.verbose(`LID resolved from database: ${remoteJid} → ${phoneNumber}`);
+        return phoneNumber;
+      }
+    } catch (error) {
+      this.logger.warn(`Error resolving LID from database: ${error}`);
+    }
+
+    // 4. Se não encontrou, retorna null (será necessário criar novo contato)
+    this.logger.warn(`Could not resolve LID: ${remoteJid}`);
+    return null;
   }
 
   public startImportHistoryMessages(instance: InstanceDto) {
