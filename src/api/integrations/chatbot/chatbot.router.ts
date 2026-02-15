@@ -1,5 +1,6 @@
 import { ChatwootRouter } from '@api/integrations/chatbot/chatwoot/routes/chatwoot.router';
 import { DifyRouter } from '@api/integrations/chatbot/dify/routes/dify.router';
+import { ChatbotManageRouter } from '@api/integrations/chatbot/manage/routes/chatbot-manage.router';
 import { OpenaiRouter } from '@api/integrations/chatbot/openai/routes/openai.router';
 import { TypebotRouter } from '@api/integrations/chatbot/typebot/routes/typebot.router';
 import { Router } from 'express';
@@ -23,5 +24,6 @@ export class ChatbotRouter {
     this.router.use('/flowise', new FlowiseRouter(...guards).router);
     this.router.use('/n8n', new N8nRouter(...guards).router);
     this.router.use('/evoai', new EvoaiRouter(...guards).router);
+    this.router.use('/manage', new ChatbotManageRouter(...guards).router);
   }
 }
