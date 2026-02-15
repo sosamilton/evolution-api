@@ -11,6 +11,22 @@ import { getConversationMessage } from '@utils/getConversationMessage';
 import { BaseChatbotDto } from './base-chatbot.dto';
 import { ChatbotController, ChatbotControllerInterface, EmitData } from './chatbot.controller';
 
+// Lazy getter to avoid circular dependency at module load time
+// chatbotChatwootService is resolved at runtime when emit() is called
+let _chatbotChatwootService: any = null;
+function getChatbotChatwootService() {
+  if (!_chatbotChatwootService) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const mod = require('@api/server.module');
+      _chatbotChatwootService = mod.chatbotChatwootService;
+    } catch {
+      return null;
+    }
+  }
+  return _chatbotChatwootService;
+}
+
 // Common settings interface for all chatbot integrations
 export interface ChatbotSettings {
   expire: number;
@@ -789,26 +805,36 @@ export abstract class BaseChatbotController<BotType = any, BotData extends BaseC
     if (!this.integrationEnabled) return;
 
     try {
+      this.logger.log(`[${this.integrationName}] emit() called for remoteJid: ${remoteJid}, instanceId: ${instance.instanceId}`);
+
       const settings = await this.settingsRepository.findFirst({
         where: {
           instanceId: instance.instanceId,
         },
       });
+      this.logger.log(`[${this.integrationName}] settings found: ${!!settings}`);
 
-      if (this.checkIgnoreJids(settings?.ignoreJids, remoteJid)) return;
+      if (this.checkIgnoreJids(settings?.ignoreJids, remoteJid)) {
+        this.logger.log(`[${this.integrationName}] remoteJid IGNORED by ignoreJids`);
+        return;
+      }
 
-      const session = await this.getSession(remoteJid, instance);
+      let session = await this.getSession(remoteJid, instance);
+      this.logger.log(`[${this.integrationName}] session: id=${session?.id}, status=${session?.status}, botId=${session?.botId}`);
 
       const content = getConversationMessage(msg);
+      this.logger.log(`[${this.integrationName}] content extracted: "${content}"`);
 
       // Get integration type
       // const integrationType = this.getIntegrationType();
 
       // Find a bot for this message
       let findBot: any = await this.findBotTrigger(this.botRepository, content, instance, session);
+      this.logger.log(`[${this.integrationName}] findBot: id=${findBot?.id}, triggerType=${findBot?.triggerType}, enabled=${findBot?.enabled}`);
 
       // If no bot is found, try to use fallback
       if (!findBot) {
+        this.logger.log(`[${this.integrationName}] no bot found, trying fallback...`);
         const fallback = await this.settingsRepository.findFirst({
           where: {
             instanceId: instance.instanceId,
@@ -826,15 +852,20 @@ export abstract class BaseChatbotController<BotType = any, BotData extends BaseC
           });
 
           findBot = findFallback;
+          this.logger.log(`[${this.integrationName}] fallback bot found: ${!!findFallback}`);
         } else {
+          this.logger.log(`[${this.integrationName}] no fallback configured, returning`);
           return;
         }
       }
 
       // If we still don't have a bot, return
       if (!findBot) {
+        this.logger.log(`[${this.integrationName}] no bot found after fallback, returning`);
         return;
       }
+
+      this.logger.log(`[${this.integrationName}] processing bot: ${findBot.id}, expire=${findBot.expire}, debounce=${findBot.debounceTime}`);
 
       // Collect settings with fallbacks to default settings
       let expire = findBot.expire;
@@ -868,6 +899,8 @@ export abstract class BaseChatbotController<BotType = any, BotData extends BaseC
         participant: string;
       };
 
+      this.logger.log(`[${this.integrationName}] key: fromMe=${key.fromMe}, remoteJid=${key.remoteJid}`);
+
       // Handle stopping the bot if message is from me
       if (stopBotFromMe && key.fromMe && session) {
         await this.prismaRepository.integrationSession.update({
@@ -893,12 +926,38 @@ export abstract class BaseChatbotController<BotType = any, BotData extends BaseC
 
       // Skip if not listening to messages from me
       if (!listeningFromMe && key.fromMe) {
+        this.logger.log(`[${this.integrationName}] skipping: fromMe=true, listeningFromMe=false`);
         return;
       }
 
-      // Skip if session exists but not awaiting user input
+      // If session is closed, nullify it so processBot treats it as a new conversation
       if (session && session.status === 'closed') {
-        return;
+        this.logger.log(`[${this.integrationName}] session is closed, nullifying to start new conversation`);
+        session = null;
+      }
+
+      // Coordination layer: check if Chatwoot has a human agent assigned
+      // If so, the bot should not process this message
+      const coordinationService = getChatbotChatwootService();
+      if (coordinationService?.isEnabled() && msg?.chatwootConversationId) {
+        const hasHuman = await coordinationService.hasHumanAgentAssigned(
+          instance.instanceId,
+          msg.chatwootConversationId,
+        );
+        if (hasHuman) {
+          this.logger.log(
+            `[${this.integrationName}] Chatwoot conversation ${msg.chatwootConversationId} has human agent, skipping bot`,
+          );
+          // If there's an active bot session, pause it
+          if (session && session.status === 'opened') {
+            await this.prismaRepository.integrationSession.update({
+              where: { id: session.id },
+              data: { status: 'paused' },
+            });
+            this.logger.log(`[${this.integrationName}] Paused bot session ${session.id} due to human agent`);
+          }
+          return;
+        }
       }
 
       // Merged settings
@@ -916,6 +975,8 @@ export abstract class BaseChatbotController<BotType = any, BotData extends BaseC
         splitMessages,
         timePerChar,
       };
+
+      this.logger.log(`[${this.integrationName}] proceeding to processBot, debounceTime=${debounceTime}`);
 
       // Process with debounce if needed
       if (debounceTime && debounceTime > 0) {
@@ -944,7 +1005,8 @@ export abstract class BaseChatbotController<BotType = any, BotData extends BaseC
         );
       }
     } catch (error) {
-      this.logger.error(error);
+      this.logger.error(`[${this.integrationName}] emit() ERROR: ${error?.message || error}`);
+      this.logger.error(error?.stack || error);
     }
   }
 }

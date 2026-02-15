@@ -1451,6 +1451,28 @@ export class ChatwootService {
           return { message: 'bot' };
         }
 
+        // Coordination: pause active bot sessions when human agent responds from Chatwoot
+        try {
+          const remoteJidForSession = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
+          const pausedSessions = await this.prismaRepository.integrationSession.updateMany({
+            where: {
+              instanceId: instance.instanceId,
+              remoteJid: remoteJidForSession,
+              status: 'opened',
+            },
+            data: {
+              status: 'paused',
+            },
+          });
+          if (pausedSessions.count > 0) {
+            this.logger.verbose(
+              `[Coordination] Paused ${pausedSessions.count} bot session(s) for ${remoteJidForSession} - human agent responded from Chatwoot`,
+            );
+          }
+        } catch (error) {
+          this.logger.error(`[Coordination] Error pausing bot sessions: ${error?.message}`);
+        }
+
         let formatText: string;
         if (senderName === null || senderName === undefined) {
           formatText = messageReceived;

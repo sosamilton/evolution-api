@@ -1,7 +1,7 @@
 import { PrismaRepository } from '@api/repository/repository.service';
 import { WAMonitoringService } from '@api/services/monitor.service';
 import { Events } from '@api/types/wa.types';
-import { Auth, ConfigService, HttpServer, Typebot } from '@config/env.config';
+import { Auth, Chatwoot, ConfigService, HttpServer, Typebot } from '@config/env.config';
 import { Instance, IntegrationSession, Message, Typebot as TypebotModel } from '@prisma/client';
 import { getConversationMessage } from '@utils/getConversationMessage';
 import { sendTelemetry } from '@utils/sendTelemetry';
@@ -427,12 +427,65 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
         });
       }
 
+      // Coordination: resolve Chatwoot conversation when bot flow completes
+      await this.resolveChatwootConversation(session.remoteJid, instance);
+
       const typebotData = {
         remoteJid: session.remoteJid,
         status: statusChange,
         session,
       };
       instance.sendDataWebhook(Events.TYPEBOT_CHANGE_STATUS, typebotData);
+    }
+  }
+
+  /**
+   * Resolve Chatwoot conversation when bot flow completes.
+   * Finds the conversation ID from recent messages and toggles status to 'resolved'.
+   */
+  private async resolveChatwootConversation(remoteJid: string, instance: any): Promise<void> {
+    try {
+      if (!this.configService?.get<Chatwoot>('CHATWOOT')?.ENABLED) return;
+
+      const instanceDb = await this.prismaRepository.instance.findFirst({
+        where: { name: instance.instanceName },
+      });
+      if (!instanceDb) return;
+
+      const provider = await this.prismaRepository.chatwoot.findFirst({
+        where: { instanceId: instanceDb.id },
+      });
+      if (!provider?.enabled || !provider.url || !provider.token || !provider.accountId) return;
+
+      // Find the conversation ID from recent messages
+      const recentMessage = await this.prismaRepository.message.findFirst({
+        where: {
+          instanceId: instanceDb.id,
+          key: { path: ['remoteJid'], equals: remoteJid },
+          chatwootConversationId: { not: null },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (!recentMessage?.chatwootConversationId) {
+        this.logger.log(`[Coordination] No Chatwoot conversation found for ${remoteJid}, skipping resolve`);
+        return;
+      }
+
+      await axios.post(
+        `${provider.url}/api/v1/accounts/${provider.accountId}/conversations/${recentMessage.chatwootConversationId}/toggle_status`,
+        { status: 'resolved' },
+        {
+          headers: { api_access_token: provider.token },
+          timeout: 5000,
+        },
+      );
+
+      this.logger.log(
+        `[Coordination] Resolved Chatwoot conversation ${recentMessage.chatwootConversationId} for ${remoteJid} (bot flow completed)`,
+      );
+    } catch (error) {
+      this.logger.error(`[Coordination] Error resolving Chatwoot conversation: ${error?.message}`);
     }
   }
 
