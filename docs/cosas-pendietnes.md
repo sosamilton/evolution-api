@@ -25,7 +25,7 @@
 - [x] Wrap `/chatbot/manage` con `manageEnabled` config
 - [x] GET `/chatbot/manage/status` devuelve config actual de coordinación
 - [x] Migración DB: `coordinationSettings JSONB` (PostgreSQL) / `JSON` (MySQL)
-- [ ] Endpoint REST para actualizar `coordinationSettings` per-instance (actualmente solo vía SQL)
+- [x] Endpoint REST para configurar `coordinationSettings` per-instance (via POST `/chatwoot/set/{instanceName}`)
 
 ### Contribución
 - [ ] Preparar PR para contribución pública (separar commits, limpiar logs de debug, escribir descripción del PR)

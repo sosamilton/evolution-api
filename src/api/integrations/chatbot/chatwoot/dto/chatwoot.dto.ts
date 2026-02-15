@@ -19,6 +19,12 @@ export class ChatwootDto {
   organization?: string;
   logo?: string;
   ignoreJids?: string[];
+  coordinationSettings?: {
+    checkAgent?: boolean;
+    autoPause?: boolean;
+    autoResolve?: boolean;
+    manageEnabled?: boolean;
+  };
 }
 
 export function ChatwootInstanceMixin<TBase extends Constructor>(Base: TBase) {

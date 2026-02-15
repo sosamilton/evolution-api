@@ -39,6 +39,15 @@ export const chatwootSchema: JSONSchema7 = {
     importMessages: { type: 'boolean', enum: [true, false] },
     daysLimitImportMessages: { type: 'number' },
     ignoreJids: { type: 'array', items: { type: 'string' } },
+    coordinationSettings: {
+      type: 'object',
+      properties: {
+        checkAgent: { type: 'boolean' },
+        autoPause: { type: 'boolean' },
+        autoResolve: { type: 'boolean' },
+        manageEnabled: { type: 'boolean' },
+      },
+    },
   },
   required: ['enabled', 'accountId', 'token', 'url', 'signMsg', 'reopenConversation', 'conversationPending'],
   ...isNotEmpty('enabled', 'accountId', 'token', 'url', 'signMsg', 'reopenConversation', 'conversationPending'),
