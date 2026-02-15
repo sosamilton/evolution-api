@@ -1452,22 +1452,37 @@ export class ChatwootService {
         }
 
         // Coordination: pause active bot sessions when human agent responds from Chatwoot
+        // Respects autoPause config (global env var + per-instance override)
         try {
-          const remoteJidForSession = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
-          const pausedSessions = await this.prismaRepository.integrationSession.updateMany({
-            where: {
-              instanceId: instance.instanceId,
-              remoteJid: remoteJidForSession,
-              status: 'opened',
-            },
-            data: {
-              status: 'paused',
-            },
-          });
-          if (pausedSessions.count > 0) {
-            this.logger.verbose(
-              `[Coordination] Paused ${pausedSessions.count} bot session(s) for ${remoteJidForSession} - human agent responded from Chatwoot`,
-            );
+          let shouldAutoPause = true;
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { chatbotChatwootService } = require('@api/server.module');
+            if (chatbotChatwootService) {
+              const config = await chatbotChatwootService.getCoordinationConfig(instance.instanceId);
+              shouldAutoPause = config.autoPause;
+            }
+          } catch {
+            // If service not available, use default (true)
+          }
+
+          if (shouldAutoPause) {
+            const remoteJidForSession = chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
+            const pausedSessions = await this.prismaRepository.integrationSession.updateMany({
+              where: {
+                instanceId: instance.instanceId,
+                remoteJid: remoteJidForSession,
+                status: 'opened',
+              },
+              data: {
+                status: 'paused',
+              },
+            });
+            if (pausedSessions.count > 0) {
+              this.logger.verbose(
+                `[Coordination] Paused ${pausedSessions.count} bot session(s) for ${remoteJidForSession} - human agent responded from Chatwoot`,
+              );
+            }
           }
         } catch (error) {
           this.logger.error(`[Coordination] Error pausing bot sessions: ${error?.message}`);

@@ -3,7 +3,7 @@ import { InstanceDto } from '@api/dto/instance.dto';
 import { ChatbotManageDto } from '@api/integrations/chatbot/manage/dto/chatbot-manage.dto';
 import { chatbotManageSchema } from '@api/integrations/chatbot/manage/validate/chatbot-manage.schema';
 import { HttpStatus } from '@api/routes/index.router';
-import { chatbotManageController } from '@api/server.module';
+import { chatbotChatwootService, chatbotManageController } from '@api/server.module';
 import { instanceSchema } from '@validate/validate.schema';
 import { RequestHandler, Router } from 'express';
 
@@ -16,7 +16,13 @@ export class ChatbotManageRouter extends RouterBroker {
           request: req,
           schema: chatbotManageSchema,
           ClassRef: ChatbotManageDto,
-          execute: (instance, data) => chatbotManageController.manage(instance, data),
+          execute: async (instance, data) => {
+            const config = await chatbotChatwootService.getCoordinationConfig(instance.instanceId);
+            if (!config.manageEnabled) {
+              return { error: 'Manage endpoint is disabled for this instance', status: 'disabled' };
+            }
+            return chatbotManageController.manage(instance, data);
+          },
         });
 
         res.status(HttpStatus.OK).json(response);
@@ -27,7 +33,13 @@ export class ChatbotManageRouter extends RouterBroker {
           schema: instanceSchema,
           ClassRef: InstanceDto,
           execute: async (instance) => {
-            return { status: 'ok', integration: 'chatbot-chatwoot-coordination', instance: instance.instanceName };
+            const config = await chatbotChatwootService.getCoordinationConfig(instance.instanceId);
+            return {
+              status: 'ok',
+              integration: 'chatbot-chatwoot-coordination',
+              instance: instance.instanceName,
+              coordination: config,
+            };
           },
         });
 

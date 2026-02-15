@@ -335,6 +335,13 @@ export type N8n = { ENABLED: boolean };
 export type Evoai = { ENABLED: boolean };
 export type Flowise = { ENABLED: boolean };
 
+export type ChatbotCoordination = {
+  CHECK_AGENT: boolean;
+  AUTO_PAUSE: boolean;
+  AUTO_RESOLVE: boolean;
+  MANAGE_ENABLED: boolean;
+};
+
 export type S3 = {
   ACCESS_KEY: string;
   SECRET_KEY: string;
@@ -418,6 +425,7 @@ export interface Env {
   N8N: N8n;
   EVOAI: Evoai;
   FLOWISE: Flowise;
+  CHATBOT_COORDINATION: ChatbotCoordination;
   CACHE: CacheConf;
   S3?: S3;
   AUTHENTICATION: Auth;
@@ -838,6 +846,12 @@ export class ConfigService {
       },
       FLOWISE: {
         ENABLED: process.env?.FLOWISE_ENABLED === 'true',
+      },
+      CHATBOT_COORDINATION: {
+        CHECK_AGENT: process.env?.CHATBOT_COORDINATION_CHECK_AGENT !== 'false',
+        AUTO_PAUSE: process.env?.CHATBOT_COORDINATION_AUTO_PAUSE !== 'false',
+        AUTO_RESOLVE: process.env?.CHATBOT_COORDINATION_AUTO_RESOLVE !== 'false',
+        MANAGE_ENABLED: process.env?.CHATBOT_COORDINATION_MANAGE_ENABLED !== 'false',
       },
       CACHE: {
         REDIS: {

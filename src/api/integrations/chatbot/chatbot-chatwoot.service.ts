@@ -1,13 +1,27 @@
 import { PrismaRepository } from '@api/repository/repository.service';
 import { WAMonitoringService } from '@api/services/monitor.service';
-import { Chatwoot, ConfigService } from '@config/env.config';
+import { ChatbotCoordination, Chatwoot, ConfigService } from '@config/env.config';
 import { Logger } from '@config/logger.config';
 import axios from 'axios';
+
+/**
+ * Per-instance coordination config. Resolved by merging:
+ *   1. Global env var defaults (CHATBOT_COORDINATION_*)
+ *   2. Per-instance override (Chatwoot.coordinationSettings JSON field)
+ */
+export interface CoordinationConfig {
+  checkAgent: boolean;
+  autoPause: boolean;
+  autoResolve: boolean;
+  manageEnabled: boolean;
+}
 
 /**
  * Coordination service between chatbot integrations and Chatwoot.
  * Handles: bot pause on human takeover, conversation resolution on bot completion,
  * and explicit management actions (transfer_human, resolve_bot, pause_bot, resume_bot).
+ *
+ * All behaviors are configurable via env vars (global) and per-instance override.
  */
 export class ChatbotChatwootService {
   private readonly logger = new Logger('ChatbotChatwootService');
@@ -26,6 +40,44 @@ export class ChatbotChatwootService {
   }
 
   /**
+   * Get global coordination defaults from env vars
+   */
+  private getGlobalDefaults(): CoordinationConfig {
+    const global = this.configService.get<ChatbotCoordination>('CHATBOT_COORDINATION');
+    return {
+      checkAgent: global.CHECK_AGENT,
+      autoPause: global.AUTO_PAUSE,
+      autoResolve: global.AUTO_RESOLVE,
+      manageEnabled: global.MANAGE_ENABLED,
+    };
+  }
+
+  /**
+   * Resolve coordination config for a specific instance.
+   * Per-instance values (from Chatwoot.coordinationSettings) override global env var defaults.
+   */
+  public async getCoordinationConfig(instanceId: string): Promise<CoordinationConfig> {
+    const defaults = this.getGlobalDefaults();
+
+    try {
+      const provider = await this.getProvider(instanceId);
+      const override = provider?.coordinationSettings as Partial<CoordinationConfig> | null;
+
+      if (!override) return defaults;
+
+      return {
+        checkAgent: override.checkAgent ?? defaults.checkAgent,
+        autoPause: override.autoPause ?? defaults.autoPause,
+        autoResolve: override.autoResolve ?? defaults.autoResolve,
+        manageEnabled: override.manageEnabled ?? defaults.manageEnabled,
+      };
+    } catch (error) {
+      this.logger.error(`[Coordination] Error reading instance config, using defaults: ${error?.message}`);
+      return defaults;
+    }
+  }
+
+  /**
    * Get the Chatwoot provider config for an instance
    */
   private async getProvider(instanceId: string) {
@@ -37,11 +89,15 @@ export class ChatbotChatwootService {
   /**
    * Check if a conversation in Chatwoot has a human agent assigned.
    * Returns true if an agent is assigned (bot should NOT process).
+   * Respects the checkAgent config flag.
    */
   public async hasHumanAgentAssigned(instanceId: string, chatwootConversationId: number): Promise<boolean> {
     if (!chatwootConversationId) return false;
 
     try {
+      const config = await this.getCoordinationConfig(instanceId);
+      if (!config.checkAgent) return false;
+
       const provider = await this.getProvider(instanceId);
       if (!provider?.enabled || !provider.url || !provider.token || !provider.accountId) return false;
 
@@ -57,7 +113,6 @@ export class ChatbotChatwootService {
       const hasAssignee = !!conversation?.meta?.assignee;
       const status = conversation?.status;
 
-      // Bot should not process if conversation is open with an assigned agent
       if (hasAssignee && status === 'open') {
         this.logger.log(
           `[Coordination] Conversation ${chatwootConversationId} has human agent assigned (status: ${status}), bot should not process`,
@@ -68,7 +123,7 @@ export class ChatbotChatwootService {
       return false;
     } catch (error) {
       this.logger.error(`[Coordination] Error checking agent assignment: ${error?.message}`);
-      return false; // On error, allow bot to process
+      return false;
     }
   }
 

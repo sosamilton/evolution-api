@@ -428,7 +428,28 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
       }
 
       // Coordination: resolve Chatwoot conversation when bot flow completes
-      await this.resolveChatwootConversation(session.remoteJid, instance);
+      // Respects autoResolve config (global env var + per-instance override)
+      try {
+        let shouldAutoResolve = true;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { chatbotChatwootService } = require('@api/server.module');
+          if (chatbotChatwootService) {
+            const instanceDb = await this.prismaRepository.instance.findFirst({ where: { name: instance.instanceName } });
+            if (instanceDb) {
+              const config = await chatbotChatwootService.getCoordinationConfig(instanceDb.id);
+              shouldAutoResolve = config.autoResolve;
+            }
+          }
+        } catch {
+          // If service not available, use default (true)
+        }
+        if (shouldAutoResolve) {
+          await this.resolveChatwootConversation(session.remoteJid, instance);
+        }
+      } catch (error) {
+        this.logger.error(`[Coordination] Error checking autoResolve config: ${error?.message}`);
+      }
 
       const typebotData = {
         remoteJid: session.remoteJid,
