@@ -283,6 +283,7 @@ export class ChannelStartupService {
           organization: data.organization,
           logo: data.logo,
           ignoreJids: data.ignoreJids,
+          coordinationSettings: data.coordinationSettings ?? undefined,
         },
       });
 
@@ -310,6 +311,7 @@ export class ChannelStartupService {
         organization: data.organization,
         logo: data.logo,
         ignoreJids: data.ignoreJids,
+        coordinationSettings: data.coordinationSettings ?? undefined,
         instanceId: this.instanceId,
       },
     });
@@ -353,6 +355,7 @@ export class ChannelStartupService {
       organization: data.organization,
       logo: data.logo,
       ignoreJids: ignoreJidsArray,
+      coordinationSettings: data.coordinationSettings as any ?? null,
     };
   }
 

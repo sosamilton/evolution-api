@@ -1325,6 +1325,35 @@ export class ChatwootService {
         this.cache.delete(keyToDelete);
       }
 
+      // Coordination: close paused bot sessions when conversation is resolved in Chatwoot
+      // This allows the bot to start a new session on the next incoming message
+      if (body.event === 'conversation_status_changed' && body.status === 'resolved' && body.meta?.sender?.identifier) {
+        const resolvedInstanceId = (this.waMonitor.waInstances[instance.instanceName])?.instanceId || instance.instanceId;
+        const resolvedChatId = body.meta.sender.identifier;
+        (async () => {
+          try {
+            const remoteJid = resolvedChatId.includes('@') ? resolvedChatId : `${resolvedChatId}@s.whatsapp.net`;
+            const closedSessions = await this.prismaRepository.integrationSession.updateMany({
+              where: {
+                instanceId: resolvedInstanceId,
+                remoteJid: remoteJid,
+                status: 'paused',
+              },
+              data: {
+                status: 'closed',
+              },
+            });
+            if (closedSessions.count > 0) {
+              this.logger.verbose(
+                `[Coordination] Closed ${closedSessions.count} paused bot session(s) for ${remoteJid} - conversation resolved in Chatwoot`,
+              );
+            }
+          } catch (error) {
+            this.logger.error(`[Coordination] Error closing paused sessions on resolve: ${error?.message}`);
+          }
+        })();
+      }
+
       if (
         !body?.conversation ||
         body.private ||
@@ -1450,6 +1479,59 @@ export class ChatwootService {
           this.onSendMessageError(instance, body.conversation?.id, 'Instance not found');
           return { message: 'bot' };
         }
+
+        // Coordination: pause active bot sessions when human agent responds from Chatwoot
+        // Fire-and-forget to avoid blocking the webhook response (Chatwoot has a 5s timeout)
+        // Respects autoPause config (global env var + per-instance override)
+        const coordInstanceId = instance.instanceId;
+        const coordChatId = chatId;
+        (async () => {
+          try {
+            let shouldAutoPause = true;
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const { chatbotChatwootService } = require('@api/server.module');
+              if (chatbotChatwootService) {
+                const config = await chatbotChatwootService.getCoordinationConfig(coordInstanceId);
+                shouldAutoPause = config.autoPause;
+              }
+            } catch {
+              // If service not available, use default (true)
+            }
+
+            if (shouldAutoPause) {
+              const remoteJidForSession = coordChatId.includes('@') ? coordChatId : `${coordChatId}@s.whatsapp.net`;
+              const pausedSessions = await this.prismaRepository.integrationSession.updateMany({
+                where: {
+                  instanceId: coordInstanceId,
+                  remoteJid: remoteJidForSession,
+                  status: 'opened',
+                },
+                data: {
+                  status: 'paused',
+                },
+              });
+              if (pausedSessions.count > 0) {
+                this.logger.verbose(
+                  `[Coordination] Paused ${pausedSessions.count} bot session(s) for ${remoteJidForSession} - human agent responded from Chatwoot`,
+                );
+
+                // Open the Chatwoot conversation so the agent can handle it
+                try {
+                  // eslint-disable-next-line @typescript-eslint/no-var-requires
+                  const { chatbotChatwootService: coordService } = require('@api/server.module');
+                  if (coordService) {
+                    await coordService.updateChatwootConversationStatus(coordInstanceId, remoteJidForSession, 'open');
+                  }
+                } catch (err) {
+                  this.logger.error(`[Coordination] Error opening conversation after pause: ${err?.message}`);
+                }
+              }
+            }
+          } catch (error) {
+            this.logger.error(`[Coordination] Error pausing bot sessions: ${error?.message}`);
+          }
+        })();
 
         let formatText: string;
         if (senderName === null || senderName === undefined) {

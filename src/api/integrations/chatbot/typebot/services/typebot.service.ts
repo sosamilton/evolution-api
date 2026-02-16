@@ -1,7 +1,7 @@
 import { PrismaRepository } from '@api/repository/repository.service';
 import { WAMonitoringService } from '@api/services/monitor.service';
 import { Events } from '@api/types/wa.types';
-import { Auth, ConfigService, HttpServer, Typebot } from '@config/env.config';
+import { Auth, Chatwoot, ConfigService, HttpServer, Typebot } from '@config/env.config';
 import { Instance, IntegrationSession, Message, Typebot as TypebotModel } from '@prisma/client';
 import { getConversationMessage } from '@utils/getConversationMessage';
 import { sendTelemetry } from '@utils/sendTelemetry';
@@ -298,6 +298,24 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
       return null;
     };
 
+    let transferToHumanRequested = false;
+
+    // Check if [transfer_human] marker detection is enabled for this instance
+    let detectMarkerEnabled = true;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { chatbotChatwootService: markerSvc } = require('@api/server.module');
+      if (markerSvc) {
+        const instDb = await this.prismaRepository.instance.findFirst({ where: { name: instance.instanceName } });
+        if (instDb) {
+          const cfg = await markerSvc.getCoordinationConfig(instDb.id);
+          detectMarkerEnabled = cfg.detectTransferMarker;
+        }
+      }
+    } catch {
+      // Default: enabled
+    }
+
     for (const message of messages) {
       if (message.type === 'text') {
         let formattedText = '';
@@ -312,6 +330,14 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
         formattedText = formattedText.replace(/\*\*/g, '').replace(/__/, '').replace(/~~/, '').replace(/\n$/, '');
 
         formattedText = formattedText.replace(/\n$/, '');
+
+        // Detect [transfer_human] marker from Typebot flow (configurable per instance)
+        if (detectMarkerEnabled && formattedText.includes('[transfer_human]')) {
+          transferToHumanRequested = true;
+          formattedText = formattedText.replace('[transfer_human]', '').trim();
+          this.logger.log(`[Coordination] Detected [transfer_human] marker in Typebot message for ${session.remoteJid}`);
+          if (!formattedText) continue; // skip empty message after stripping marker
+        }
 
         if (formattedText.includes('[list]')) {
           await this.processListMessage(instance, formattedText, session.remoteJid);
@@ -382,8 +408,11 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
 
         const items = input.items;
 
-        for (const item of items) {
-          formattedText += `▶️ ${item.content}\n`;
+        // Format choices with numbers for easier selection
+        const choiceMap: Record<string, string> = {};
+        for (let i = 0; i < items.length; i++) {
+          formattedText += `*${i + 1}.* ${items[i].content}\n`;
+          choiceMap[String(i + 1)] = items[i].content;
         }
 
         formattedText = formattedText.replace(/\n$/, '');
@@ -399,40 +428,152 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
         sendTelemetry('/message/sendText');
       }
 
+      // Store choice map in session for number-based selection
+      const currentParams = (session.parameters as Record<string, any>) || {};
+      const updatedParams: any = {
+        ...currentParams,
+        lastChoiceMap: input.type === 'choice input' ? Object.fromEntries(
+          input.items.map((item: any, idx: number) => [String(idx + 1), item.content])
+        ) : undefined,
+      };
       await prismaRepository.integrationSession.update({
         where: {
           id: session.id,
         },
         data: {
           awaitUser: true,
+          parameters: updatedParams,
         },
       });
     } else {
-      let statusChange = 'closed';
-      if (!settings?.keepOpen) {
-        await prismaRepository.integrationSession.deleteMany({
-          where: {
-            id: session.id,
-          },
-        });
-        statusChange = 'delete';
+      // Check if transfer_human was requested via [transfer_human] marker or HTTP Request
+      const currentSession = await prismaRepository.integrationSession.findUnique({
+        where: { id: session.id },
+      });
+      const sessionPaused = currentSession?.status === 'paused';
+
+      if (transferToHumanRequested || sessionPaused) {
+        this.logger.log(
+          `[Coordination] Transfer to human requested for ${session.remoteJid} (marker: ${transferToHumanRequested}, paused: ${sessionPaused})`,
+        );
+
+        // Execute transfer_human logic internally
+        if (transferToHumanRequested && !sessionPaused) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { chatbotChatwootService } = require('@api/server.module');
+            if (chatbotChatwootService) {
+              const instanceDb = await this.prismaRepository.instance.findFirst({ where: { name: instance.instanceName } });
+              if (instanceDb) {
+                const result = await chatbotChatwootService.transferToHuman(instanceDb.id, session.remoteJid);
+                this.logger.log(`[Coordination] transferToHuman result: ${JSON.stringify(result)}`);
+              }
+            }
+          } catch (err) {
+            this.logger.error(`[Coordination] Error executing transferToHuman: ${err?.message}`);
+          }
+        }
       } else {
-        await prismaRepository.integrationSession.update({
-          where: {
-            id: session.id,
-          },
-          data: {
-            status: 'closed',
-          },
-        });
+        let statusChange = 'closed';
+        if (!settings?.keepOpen) {
+          await prismaRepository.integrationSession.deleteMany({
+            where: {
+              id: session.id,
+            },
+          });
+          statusChange = 'delete';
+        } else {
+          await prismaRepository.integrationSession.update({
+            where: {
+              id: session.id,
+            },
+            data: {
+              status: 'closed',
+            },
+          });
+        }
+
+        // Coordination: resolve Chatwoot conversation when bot flow completes
+        // Respects autoResolve config (global env var + per-instance override)
+        try {
+          let shouldAutoResolve = true;
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { chatbotChatwootService } = require('@api/server.module');
+            if (chatbotChatwootService) {
+              const instanceDb = await this.prismaRepository.instance.findFirst({ where: { name: instance.instanceName } });
+              if (instanceDb) {
+                const config = await chatbotChatwootService.getCoordinationConfig(instanceDb.id);
+                shouldAutoResolve = config.autoResolve;
+              }
+            }
+          } catch {
+            // If service not available, use default (true)
+          }
+          if (shouldAutoResolve) {
+            await this.resolveChatwootConversation(session.remoteJid, instance);
+          }
+        } catch (error) {
+          this.logger.error(`[Coordination] Error checking autoResolve config: ${error?.message}`);
+        }
+
+        const typebotData = {
+          remoteJid: session.remoteJid,
+          status: statusChange,
+          session,
+        };
+        instance.sendDataWebhook(Events.TYPEBOT_CHANGE_STATUS, typebotData);
+      }
+    }
+  }
+
+  /**
+   * Resolve Chatwoot conversation when bot flow completes.
+   * Finds the conversation ID from recent messages and toggles status to 'resolved'.
+   */
+  private async resolveChatwootConversation(remoteJid: string, instance: any): Promise<void> {
+    try {
+      if (!this.configService?.get<Chatwoot>('CHATWOOT')?.ENABLED) return;
+
+      const instanceDb = await this.prismaRepository.instance.findFirst({
+        where: { name: instance.instanceName },
+      });
+      if (!instanceDb) return;
+
+      const provider = await this.prismaRepository.chatwoot.findFirst({
+        where: { instanceId: instanceDb.id },
+      });
+      if (!provider?.enabled || !provider.url || !provider.token || !provider.accountId) return;
+
+      // Find the conversation ID from recent messages
+      const recentMessage = await this.prismaRepository.message.findFirst({
+        where: {
+          instanceId: instanceDb.id,
+          key: { path: ['remoteJid'], equals: remoteJid },
+          chatwootConversationId: { not: null },
+        },
+        orderBy: { messageTimestamp: 'desc' },
+      });
+
+      if (!recentMessage?.chatwootConversationId) {
+        this.logger.log(`[Coordination] No Chatwoot conversation found for ${remoteJid}, skipping resolve`);
+        return;
       }
 
-      const typebotData = {
-        remoteJid: session.remoteJid,
-        status: statusChange,
-        session,
-      };
-      instance.sendDataWebhook(Events.TYPEBOT_CHANGE_STATUS, typebotData);
+      await axios.post(
+        `${provider.url}/api/v1/accounts/${provider.accountId}/conversations/${recentMessage.chatwootConversationId}/toggle_status`,
+        { status: 'resolved' },
+        {
+          headers: { api_access_token: provider.token },
+          timeout: 5000,
+        },
+      );
+
+      this.logger.log(
+        `[Coordination] Resolved Chatwoot conversation ${recentMessage.chatwootConversationId} for ${remoteJid} (bot flow completed)`,
+      );
+    } catch (error) {
+      this.logger.error(`[Coordination] Error resolving Chatwoot conversation: ${error?.message}`);
     }
   }
 
@@ -968,18 +1109,38 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
     }
 
     // Continue existing chat
+    // Resolve numeric replies to choice text using stored choiceMap
+    // Refresh session from DB to get the latest parameters (lastChoiceMap may have been set in previous turn)
+    let resolvedContent = content;
+    const freshSession = await this.prismaRepository.integrationSession.findUnique({
+      where: { id: session.id },
+    });
+    const sessionParams = (freshSession?.parameters as Record<string, any>) || {};
+    if (sessionParams.lastChoiceMap && sessionParams.lastChoiceMap[content.trim()]) {
+      resolvedContent = sessionParams.lastChoiceMap[content.trim()];
+      this.logger.verbose(`[TypeBot] Resolved numeric choice "${content.trim()}" → "${resolvedContent}"`);
+      // Clear the choiceMap after use
+      const clearedParams: any = { ...sessionParams, lastChoiceMap: undefined };
+      await this.prismaRepository.integrationSession.update({
+        where: { id: session.id },
+        data: {
+          parameters: clearedParams,
+        },
+      });
+    }
+
     const version = this.configService.get<Typebot>('TYPEBOT').API_VERSION;
     let urlTypebot: string;
     let reqData: { message: string; sessionId?: string };
     if (version === 'latest') {
       urlTypebot = `${url}/api/v1/sessions/${session.sessionId.split('-')[1]}/continueChat`;
       reqData = {
-        message: content,
+        message: resolvedContent,
       };
     } else {
       urlTypebot = `${url}/api/v1/sendMessage`;
       reqData = {
-        message: content,
+        message: resolvedContent,
         sessionId: session.sessionId.split('-')[1],
       };
     }

@@ -14,6 +14,8 @@ import { Logger } from '@config/logger.config';
 import { IntegrationSession } from '@prisma/client';
 import { findBotByTrigger } from '@utils/findBotByTrigger';
 
+import { ChatbotChatwootService } from './chatbot-chatwoot.service';
+
 export type EmitData = {
   instance: InstanceDto;
   remoteJid: string;
@@ -47,12 +49,14 @@ export interface ChatbotControllerInterface {
 export class ChatbotController {
   public prismaRepository: PrismaRepository;
   public waMonitor: WAMonitoringService;
+  public chatbotChatwootService: ChatbotChatwootService;
 
   public readonly logger = new Logger('ChatbotController');
 
-  constructor(prismaRepository: PrismaRepository, waMonitor: WAMonitoringService) {
+  constructor(prismaRepository: PrismaRepository, waMonitor: WAMonitoringService, chatbotChatwootService?: ChatbotChatwootService) {
     this.prisma = prismaRepository;
     this.monitor = waMonitor;
+    this.chatbotChatwootService = chatbotChatwootService;
   }
 
   public set prisma(prisma: PrismaRepository) {

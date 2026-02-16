@@ -17,7 +17,9 @@ import { ChannelController } from './integrations/channel/channel.controller';
 import { EvolutionController } from './integrations/channel/evolution/evolution.controller';
 import { MetaController } from './integrations/channel/meta/meta.controller';
 import { BaileysController } from './integrations/channel/whatsapp/baileys.controller';
+import { ChatbotChatwootService } from './integrations/chatbot/chatbot-chatwoot.service';
 import { ChatbotController } from './integrations/chatbot/chatbot.controller';
+import { ChatbotManageController } from './integrations/chatbot/manage/controllers/chatbot-manage.controller';
 import { ChatwootController } from './integrations/chatbot/chatwoot/controllers/chatwoot.controller';
 import { ChatwootService } from './integrations/chatbot/chatwoot/services/chatwoot.service';
 import { DifyController } from './integrations/chatbot/dify/controllers/dify.controller';
@@ -108,7 +110,9 @@ export const groupController = new GroupController(waMonitor);
 export const labelController = new LabelController(waMonitor);
 
 export const eventManager = new EventManager(prismaRepository, waMonitor);
-export const chatbotController = new ChatbotController(prismaRepository, waMonitor);
+export const chatbotChatwootService = new ChatbotChatwootService(prismaRepository, waMonitor, configService);
+export const chatbotController = new ChatbotController(prismaRepository, waMonitor, chatbotChatwootService);
+export const chatbotManageController = new ChatbotManageController(chatbotChatwootService, prismaRepository);
 export const channelController = new ChannelController(prismaRepository, waMonitor);
 
 // channels

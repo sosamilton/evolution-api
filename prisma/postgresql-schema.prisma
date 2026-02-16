@@ -232,6 +232,7 @@ model Chatwoot {
   organization            String?   @db.VarChar(100)
   logo                    String?   @db.VarChar(500)
   ignoreJids              Json?
+  coordinationSettings    Json?     @db.JsonB
   createdAt               DateTime? @default(now()) @db.Timestamp
   updatedAt               DateTime  @updatedAt @db.Timestamp
   Instance                Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
