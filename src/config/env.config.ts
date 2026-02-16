@@ -340,6 +340,7 @@ export type ChatbotCoordination = {
   AUTO_PAUSE: boolean;
   AUTO_RESOLVE: boolean;
   MANAGE_ENABLED: boolean;
+  DETECT_TRANSFER_MARKER: boolean;
 };
 
 export type S3 = {
@@ -852,6 +853,7 @@ export class ConfigService {
         AUTO_PAUSE: process.env?.CHATBOT_COORDINATION_AUTO_PAUSE !== 'false',
         AUTO_RESOLVE: process.env?.CHATBOT_COORDINATION_AUTO_RESOLVE !== 'false',
         MANAGE_ENABLED: process.env?.CHATBOT_COORDINATION_MANAGE_ENABLED !== 'false',
+        DETECT_TRANSFER_MARKER: process.env?.CHATBOT_COORDINATION_DETECT_TRANSFER_MARKER !== 'false',
       },
       CACHE: {
         REDIS: {

@@ -14,6 +14,7 @@ export interface CoordinationConfig {
   autoPause: boolean;
   autoResolve: boolean;
   manageEnabled: boolean;
+  detectTransferMarker: boolean;
 }
 
 /**
@@ -49,6 +50,7 @@ export class ChatbotChatwootService {
       autoPause: global.AUTO_PAUSE,
       autoResolve: global.AUTO_RESOLVE,
       manageEnabled: global.MANAGE_ENABLED,
+      detectTransferMarker: global.DETECT_TRANSFER_MARKER,
     };
   }
 
@@ -70,6 +72,7 @@ export class ChatbotChatwootService {
         autoPause: override.autoPause ?? defaults.autoPause,
         autoResolve: override.autoResolve ?? defaults.autoResolve,
         manageEnabled: override.manageEnabled ?? defaults.manageEnabled,
+        detectTransferMarker: override.detectTransferMarker ?? defaults.detectTransferMarker,
       };
     } catch (error) {
       this.logger.error(`[Coordination] Error reading instance config, using defaults: ${error?.message}`);
@@ -241,7 +244,7 @@ export class ChatbotChatwootService {
         },
         chatwootConversationId: { not: null },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { messageTimestamp: 'desc' },
     });
 
     if (recentMessage?.chatwootConversationId) {

@@ -298,6 +298,24 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
       return null;
     };
 
+    let transferToHumanRequested = false;
+
+    // Check if [transfer_human] marker detection is enabled for this instance
+    let detectMarkerEnabled = true;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { chatbotChatwootService: markerSvc } = require('@api/server.module');
+      if (markerSvc) {
+        const instDb = await this.prismaRepository.instance.findFirst({ where: { name: instance.instanceName } });
+        if (instDb) {
+          const cfg = await markerSvc.getCoordinationConfig(instDb.id);
+          detectMarkerEnabled = cfg.detectTransferMarker;
+        }
+      }
+    } catch {
+      // Default: enabled
+    }
+
     for (const message of messages) {
       if (message.type === 'text') {
         let formattedText = '';
@@ -312,6 +330,14 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
         formattedText = formattedText.replace(/\*\*/g, '').replace(/__/, '').replace(/~~/, '').replace(/\n$/, '');
 
         formattedText = formattedText.replace(/\n$/, '');
+
+        // Detect [transfer_human] marker from Typebot flow (configurable per instance)
+        if (detectMarkerEnabled && formattedText.includes('[transfer_human]')) {
+          transferToHumanRequested = true;
+          formattedText = formattedText.replace('[transfer_human]', '').trim();
+          this.logger.log(`[Coordination] Detected [transfer_human] marker in Typebot message for ${session.remoteJid}`);
+          if (!formattedText) continue; // skip empty message after stripping marker
+        }
 
         if (formattedText.includes('[list]')) {
           await this.processListMessage(instance, formattedText, session.remoteJid);
@@ -408,55 +434,84 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
         },
       });
     } else {
-      let statusChange = 'closed';
-      if (!settings?.keepOpen) {
-        await prismaRepository.integrationSession.deleteMany({
-          where: {
-            id: session.id,
-          },
-        });
-        statusChange = 'delete';
-      } else {
-        await prismaRepository.integrationSession.update({
-          where: {
-            id: session.id,
-          },
-          data: {
-            status: 'closed',
-          },
-        });
-      }
+      // Check if transfer_human was requested via [transfer_human] marker or HTTP Request
+      const currentSession = await prismaRepository.integrationSession.findUnique({
+        where: { id: session.id },
+      });
+      const sessionPaused = currentSession?.status === 'paused';
 
-      // Coordination: resolve Chatwoot conversation when bot flow completes
-      // Respects autoResolve config (global env var + per-instance override)
-      try {
-        let shouldAutoResolve = true;
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const { chatbotChatwootService } = require('@api/server.module');
-          if (chatbotChatwootService) {
-            const instanceDb = await this.prismaRepository.instance.findFirst({ where: { name: instance.instanceName } });
-            if (instanceDb) {
-              const config = await chatbotChatwootService.getCoordinationConfig(instanceDb.id);
-              shouldAutoResolve = config.autoResolve;
+      if (transferToHumanRequested || sessionPaused) {
+        this.logger.log(
+          `[Coordination] Transfer to human requested for ${session.remoteJid} (marker: ${transferToHumanRequested}, paused: ${sessionPaused})`,
+        );
+
+        // Execute transfer_human logic internally
+        if (transferToHumanRequested && !sessionPaused) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { chatbotChatwootService } = require('@api/server.module');
+            if (chatbotChatwootService) {
+              const instanceDb = await this.prismaRepository.instance.findFirst({ where: { name: instance.instanceName } });
+              if (instanceDb) {
+                const result = await chatbotChatwootService.transferToHuman(instanceDb.id, session.remoteJid);
+                this.logger.log(`[Coordination] transferToHuman result: ${JSON.stringify(result)}`);
+              }
             }
+          } catch (err) {
+            this.logger.error(`[Coordination] Error executing transferToHuman: ${err?.message}`);
           }
-        } catch {
-          // If service not available, use default (true)
         }
-        if (shouldAutoResolve) {
-          await this.resolveChatwootConversation(session.remoteJid, instance);
+      } else {
+        let statusChange = 'closed';
+        if (!settings?.keepOpen) {
+          await prismaRepository.integrationSession.deleteMany({
+            where: {
+              id: session.id,
+            },
+          });
+          statusChange = 'delete';
+        } else {
+          await prismaRepository.integrationSession.update({
+            where: {
+              id: session.id,
+            },
+            data: {
+              status: 'closed',
+            },
+          });
         }
-      } catch (error) {
-        this.logger.error(`[Coordination] Error checking autoResolve config: ${error?.message}`);
-      }
 
-      const typebotData = {
-        remoteJid: session.remoteJid,
-        status: statusChange,
-        session,
-      };
-      instance.sendDataWebhook(Events.TYPEBOT_CHANGE_STATUS, typebotData);
+        // Coordination: resolve Chatwoot conversation when bot flow completes
+        // Respects autoResolve config (global env var + per-instance override)
+        try {
+          let shouldAutoResolve = true;
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { chatbotChatwootService } = require('@api/server.module');
+            if (chatbotChatwootService) {
+              const instanceDb = await this.prismaRepository.instance.findFirst({ where: { name: instance.instanceName } });
+              if (instanceDb) {
+                const config = await chatbotChatwootService.getCoordinationConfig(instanceDb.id);
+                shouldAutoResolve = config.autoResolve;
+              }
+            }
+          } catch {
+            // If service not available, use default (true)
+          }
+          if (shouldAutoResolve) {
+            await this.resolveChatwootConversation(session.remoteJid, instance);
+          }
+        } catch (error) {
+          this.logger.error(`[Coordination] Error checking autoResolve config: ${error?.message}`);
+        }
+
+        const typebotData = {
+          remoteJid: session.remoteJid,
+          status: statusChange,
+          session,
+        };
+        instance.sendDataWebhook(Events.TYPEBOT_CHANGE_STATUS, typebotData);
+      }
     }
   }
 
@@ -485,7 +540,7 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
           key: { path: ['remoteJid'], equals: remoteJid },
           chatwootConversationId: { not: null },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { messageTimestamp: 'desc' },
       });
 
       if (!recentMessage?.chatwootConversationId) {
