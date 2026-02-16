@@ -408,8 +408,11 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
 
         const items = input.items;
 
-        for (const item of items) {
-          formattedText += `▶️ ${item.content}\n`;
+        // Format choices with numbers for easier selection
+        const choiceMap: Record<string, string> = {};
+        for (let i = 0; i < items.length; i++) {
+          formattedText += `*${i + 1}.* ${items[i].content}\n`;
+          choiceMap[String(i + 1)] = items[i].content;
         }
 
         formattedText = formattedText.replace(/\n$/, '');
@@ -425,12 +428,21 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
         sendTelemetry('/message/sendText');
       }
 
+      // Store choice map in session for number-based selection
+      const currentParams = (session.parameters as Record<string, any>) || {};
+      const updatedParams: any = {
+        ...currentParams,
+        lastChoiceMap: input.type === 'choice input' ? Object.fromEntries(
+          input.items.map((item: any, idx: number) => [String(idx + 1), item.content])
+        ) : undefined,
+      };
       await prismaRepository.integrationSession.update({
         where: {
           id: session.id,
         },
         data: {
           awaitUser: true,
+          parameters: updatedParams,
         },
       });
     } else {
@@ -1097,18 +1109,38 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
     }
 
     // Continue existing chat
+    // Resolve numeric replies to choice text using stored choiceMap
+    // Refresh session from DB to get the latest parameters (lastChoiceMap may have been set in previous turn)
+    let resolvedContent = content;
+    const freshSession = await this.prismaRepository.integrationSession.findUnique({
+      where: { id: session.id },
+    });
+    const sessionParams = (freshSession?.parameters as Record<string, any>) || {};
+    if (sessionParams.lastChoiceMap && sessionParams.lastChoiceMap[content.trim()]) {
+      resolvedContent = sessionParams.lastChoiceMap[content.trim()];
+      this.logger.verbose(`[TypeBot] Resolved numeric choice "${content.trim()}" → "${resolvedContent}"`);
+      // Clear the choiceMap after use
+      const clearedParams: any = { ...sessionParams, lastChoiceMap: undefined };
+      await this.prismaRepository.integrationSession.update({
+        where: { id: session.id },
+        data: {
+          parameters: clearedParams,
+        },
+      });
+    }
+
     const version = this.configService.get<Typebot>('TYPEBOT').API_VERSION;
     let urlTypebot: string;
     let reqData: { message: string; sessionId?: string };
     if (version === 'latest') {
       urlTypebot = `${url}/api/v1/sessions/${session.sessionId.split('-')[1]}/continueChat`;
       reqData = {
-        message: content,
+        message: resolvedContent,
       };
     } else {
       urlTypebot = `${url}/api/v1/sendMessage`;
       reqData = {
-        message: content,
+        message: resolvedContent,
         sessionId: session.sessionId.split('-')[1],
       };
     }
