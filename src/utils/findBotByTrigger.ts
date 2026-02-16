@@ -1,6 +1,20 @@
 import { advancedOperatorsSearch } from './advancedOperatorsSearch';
 
 export const findBotByTrigger = async (botRepository: any, content: string, instanceId: string) => {
+  // Guard: if content is null/undefined, only match 'all' or 'none' triggers
+  if (content === undefined || content === null || content === '') {
+    const findTriggerAllOrNone = await botRepository.findFirst({
+      where: {
+        enabled: true,
+        triggerType: {
+          in: ['all', 'none'],
+        },
+        instanceId: instanceId,
+      },
+    });
+    return findTriggerAllOrNone || null;
+  }
+
   // Check for triggerType 'all' or 'none' (both should match any message)
   const findTriggerAllOrNone = await botRepository.findFirst({
     where: {
