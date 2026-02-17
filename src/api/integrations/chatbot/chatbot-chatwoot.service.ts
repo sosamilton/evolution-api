@@ -148,7 +148,9 @@ export class ChatbotChatwootService {
       });
 
       if (result.count > 0) {
-        this.logger.log(`[Coordination] Paused ${result.count} bot session(s) for ${remoteJid} (human agent responded)`);
+        this.logger.log(
+          `[Coordination] Paused ${result.count} bot session(s) for ${remoteJid} (human agent responded)`,
+        );
       }
 
       return result.count;
@@ -174,7 +176,7 @@ export class ChatbotChatwootService {
       if (!provider?.enabled || !provider.url || !provider.token || !provider.accountId) return false;
 
       // Find the conversation ID from cache or recent messages
-      const conversationId = await this.findChatwootConversationId(instanceId, remoteJid, provider);
+      const conversationId = await this.findChatwootConversationId(instanceId, remoteJid);
       if (!conversationId) {
         this.logger.warn(`[Coordination] No Chatwoot conversation found for ${remoteJid}`);
         return false;
@@ -232,7 +234,6 @@ export class ChatbotChatwootService {
   private async findChatwootConversationId(
     instanceId: string,
     remoteJid: string,
-    provider: any,
   ): Promise<number | null> {
     // Strategy 1: Look at the most recent message with chatwootConversationId
     const recentMessage = await this.prismaRepository.message.findFirst({

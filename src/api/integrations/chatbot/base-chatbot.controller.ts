@@ -18,7 +18,7 @@ function getChatbotChatwootService() {
   if (!_chatbotChatwootService) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const mod = require('@api/server.module');
+      const mod = eval('require')('@api/server.module');
       _chatbotChatwootService = mod.chatbotChatwootService;
     } catch {
       return null;

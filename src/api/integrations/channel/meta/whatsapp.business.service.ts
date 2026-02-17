@@ -685,7 +685,9 @@ export class BusinessStartupService extends ChannelStartupService {
 
         this.sendDataWebhook(Events.MESSAGES_UPSERT, messageRaw);
 
-        this.logger.log(`[CloudAPI] chatbotController.emit() remoteJid=${messageRaw.key.remoteJid}, messageType=${messageRaw.messageType}, fromMe=${messageRaw.key.fromMe}`);
+        this.logger.log(
+          `[CloudAPI] chatbotController.emit() remoteJid=${messageRaw.key.remoteJid}, messageType=${messageRaw.messageType}, fromMe=${messageRaw.key.fromMe}`,
+        );
 
         await chatbotController.emit({
           instance: { instanceName: this.instance.name, instanceId: this.instanceId },
