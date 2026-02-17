@@ -60,7 +60,9 @@ export class ChatbotManageController {
       }
 
       default:
-        throw new BadRequestException(`Invalid action: ${data.action}. Valid actions: transfer_human, resolve_bot, pause_bot, resume_bot`);
+        throw new BadRequestException(
+          `Invalid action: ${data.action}. Valid actions: transfer_human, resolve_bot, pause_bot, resume_bot`,
+        );
     }
   }
 }

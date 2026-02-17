@@ -53,7 +53,11 @@ export class ChatbotController {
 
   public readonly logger = new Logger('ChatbotController');
 
-  constructor(prismaRepository: PrismaRepository, waMonitor: WAMonitoringService, chatbotChatwootService?: ChatbotChatwootService) {
+  constructor(
+    prismaRepository: PrismaRepository,
+    waMonitor: WAMonitoringService,
+    chatbotChatwootService?: ChatbotChatwootService,
+  ) {
     this.prisma = prismaRepository;
     this.monitor = waMonitor;
     this.chatbotChatwootService = chatbotChatwootService;

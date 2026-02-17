@@ -355,7 +355,7 @@ export class ChannelStartupService {
       organization: data.organization,
       logo: data.logo,
       ignoreJids: ignoreJidsArray,
-      coordinationSettings: data.coordinationSettings as any ?? null,
+      coordinationSettings: (data.coordinationSettings as any) ?? null,
     };
   }
 

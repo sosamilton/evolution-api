@@ -231,10 +231,7 @@ export class ChatbotChatwootService {
    * Find the Chatwoot conversation ID for a given remoteJid.
    * Looks at the most recent message with a chatwootConversationId.
    */
-  private async findChatwootConversationId(
-    instanceId: string,
-    remoteJid: string,
-  ): Promise<number | null> {
+  private async findChatwootConversationId(instanceId: string, remoteJid: string): Promise<number | null> {
     // Strategy 1: Look at the most recent message with chatwootConversationId
     const recentMessage = await this.prismaRepository.message.findFirst({
       where: {
@@ -316,10 +313,7 @@ export class ChatbotChatwootService {
   /**
    * Resume bot: reactivate a paused bot session
    */
-  public async resumeBot(
-    instanceId: string,
-    remoteJid: string,
-  ): Promise<{ success: boolean; message: string }> {
+  public async resumeBot(instanceId: string, remoteJid: string): Promise<{ success: boolean; message: string }> {
     const result = await this.prismaRepository.integrationSession.updateMany({
       where: {
         instanceId,
@@ -340,10 +334,7 @@ export class ChatbotChatwootService {
   /**
    * Pause bot: pause active bot sessions (without touching Chatwoot)
    */
-  public async pauseBot(
-    instanceId: string,
-    remoteJid: string,
-  ): Promise<{ success: boolean; message: string }> {
+  public async pauseBot(instanceId: string, remoteJid: string): Promise<{ success: boolean; message: string }> {
     const paused = await this.pauseBotSessionsForJid(instanceId, remoteJid);
 
     return {

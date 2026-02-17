@@ -304,7 +304,7 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
     let detectMarkerEnabled = true;
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { chatbotChatwootService: markerSvc } = require('@api/server.module');
+      const { chatbotChatwootService: markerSvc } = eval('require')('@api/server.module');
       if (markerSvc) {
         const instDb = await this.prismaRepository.instance.findFirst({ where: { name: instance.instanceName } });
         if (instDb) {
@@ -335,7 +335,9 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
         if (detectMarkerEnabled && formattedText.includes('[transfer_human]')) {
           transferToHumanRequested = true;
           formattedText = formattedText.replace('[transfer_human]', '').trim();
-          this.logger.log(`[Coordination] Detected [transfer_human] marker in Typebot message for ${session.remoteJid}`);
+          this.logger.log(
+            `[Coordination] Detected [transfer_human] marker in Typebot message for ${session.remoteJid}`,
+          );
           if (!formattedText) continue; // skip empty message after stripping marker
         }
 
@@ -432,9 +434,10 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
       const currentParams = (session.parameters as Record<string, any>) || {};
       const updatedParams: any = {
         ...currentParams,
-        lastChoiceMap: input.type === 'choice input' ? Object.fromEntries(
-          input.items.map((item: any, idx: number) => [String(idx + 1), item.content])
-        ) : undefined,
+        lastChoiceMap:
+          input.type === 'choice input'
+            ? Object.fromEntries(input.items.map((item: any, idx: number) => [String(idx + 1), item.content]))
+            : undefined,
       };
       await prismaRepository.integrationSession.update({
         where: {
@@ -461,9 +464,11 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
         if (transferToHumanRequested && !sessionPaused) {
           try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const { chatbotChatwootService } = require('@api/server.module');
+            const { chatbotChatwootService } = eval('require')('@api/server.module');
             if (chatbotChatwootService) {
-              const instanceDb = await this.prismaRepository.instance.findFirst({ where: { name: instance.instanceName } });
+              const instanceDb = await this.prismaRepository.instance.findFirst({
+                where: { name: instance.instanceName },
+              });
               if (instanceDb) {
                 const result = await chatbotChatwootService.transferToHuman(instanceDb.id, session.remoteJid);
                 this.logger.log(`[Coordination] transferToHuman result: ${JSON.stringify(result)}`);
@@ -499,9 +504,11 @@ export class TypebotService extends BaseChatbotService<TypebotModel, any> {
           let shouldAutoResolve = true;
           try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const { chatbotChatwootService } = require('@api/server.module');
+            const { chatbotChatwootService } = eval('require')('@api/server.module');
             if (chatbotChatwootService) {
-              const instanceDb = await this.prismaRepository.instance.findFirst({ where: { name: instance.instanceName } });
+              const instanceDb = await this.prismaRepository.instance.findFirst({
+                where: { name: instance.instanceName },
+              });
               if (instanceDb) {
                 const config = await chatbotChatwootService.getCoordinationConfig(instanceDb.id);
                 shouldAutoResolve = config.autoResolve;

@@ -805,7 +805,9 @@ export abstract class BaseChatbotController<BotType = any, BotData extends BaseC
     if (!this.integrationEnabled) return;
 
     try {
-      this.logger.log(`[${this.integrationName}] emit() called for remoteJid: ${remoteJid}, instanceId: ${instance.instanceId}`);
+      this.logger.log(
+        `[${this.integrationName}] emit() called for remoteJid: ${remoteJid}, instanceId: ${instance.instanceId}`,
+      );
 
       const settings = await this.settingsRepository.findFirst({
         where: {
@@ -820,7 +822,9 @@ export abstract class BaseChatbotController<BotType = any, BotData extends BaseC
       }
 
       let session = await this.getSession(remoteJid, instance);
-      this.logger.log(`[${this.integrationName}] session: id=${session?.id}, status=${session?.status}, botId=${session?.botId}`);
+      this.logger.log(
+        `[${this.integrationName}] session: id=${session?.id}, status=${session?.status}, botId=${session?.botId}`,
+      );
 
       const content = getConversationMessage(msg);
       this.logger.log(`[${this.integrationName}] content extracted: "${content}"`);
@@ -830,7 +834,9 @@ export abstract class BaseChatbotController<BotType = any, BotData extends BaseC
 
       // Find a bot for this message
       let findBot: any = await this.findBotTrigger(this.botRepository, content, instance, session);
-      this.logger.log(`[${this.integrationName}] findBot: id=${findBot?.id}, triggerType=${findBot?.triggerType}, enabled=${findBot?.enabled}`);
+      this.logger.log(
+        `[${this.integrationName}] findBot: id=${findBot?.id}, triggerType=${findBot?.triggerType}, enabled=${findBot?.enabled}`,
+      );
 
       // If no bot is found, try to use fallback
       if (!findBot) {
@@ -865,7 +871,9 @@ export abstract class BaseChatbotController<BotType = any, BotData extends BaseC
         return;
       }
 
-      this.logger.log(`[${this.integrationName}] processing bot: ${findBot.id}, expire=${findBot.expire}, debounce=${findBot.debounceTime}`);
+      this.logger.log(
+        `[${this.integrationName}] processing bot: ${findBot.id}, expire=${findBot.expire}, debounce=${findBot.debounceTime}`,
+      );
 
       // Collect settings with fallbacks to default settings
       let expire = findBot.expire;

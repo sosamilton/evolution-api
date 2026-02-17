@@ -1328,7 +1328,7 @@ export class ChatwootService {
       // Coordination: close paused bot sessions when conversation is resolved in Chatwoot
       // This allows the bot to start a new session on the next incoming message
       if (body.event === 'conversation_status_changed' && body.status === 'resolved' && body.meta?.sender?.identifier) {
-        const resolvedInstanceId = (this.waMonitor.waInstances[instance.instanceName])?.instanceId || instance.instanceId;
+        const resolvedInstanceId = this.waMonitor.waInstances[instance.instanceName]?.instanceId || instance.instanceId;
         const resolvedChatId = body.meta.sender.identifier;
         (async () => {
           try {
@@ -1490,7 +1490,7 @@ export class ChatwootService {
             let shouldAutoPause = true;
             try {
               // eslint-disable-next-line @typescript-eslint/no-var-requires
-              const { chatbotChatwootService } = require('@api/server.module');
+              const { chatbotChatwootService } = eval('require')('@api/server.module');
               if (chatbotChatwootService) {
                 const config = await chatbotChatwootService.getCoordinationConfig(coordInstanceId);
                 shouldAutoPause = config.autoPause;
@@ -1519,7 +1519,7 @@ export class ChatwootService {
                 // Open the Chatwoot conversation so the agent can handle it
                 try {
                   // eslint-disable-next-line @typescript-eslint/no-var-requires
-                  const { chatbotChatwootService: coordService } = require('@api/server.module');
+                  const { chatbotChatwootService: coordService } = eval('require')('@api/server.module');
                   if (coordService) {
                     await coordService.updateChatwootConversationStatus(coordInstanceId, remoteJidForSession, 'open');
                   }

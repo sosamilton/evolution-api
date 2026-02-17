@@ -17,9 +17,8 @@ import { ChannelController } from './integrations/channel/channel.controller';
 import { EvolutionController } from './integrations/channel/evolution/evolution.controller';
 import { MetaController } from './integrations/channel/meta/meta.controller';
 import { BaileysController } from './integrations/channel/whatsapp/baileys.controller';
-import { ChatbotChatwootService } from './integrations/chatbot/chatbot-chatwoot.service';
 import { ChatbotController } from './integrations/chatbot/chatbot.controller';
-import { ChatbotManageController } from './integrations/chatbot/manage/controllers/chatbot-manage.controller';
+import { ChatbotChatwootService } from './integrations/chatbot/chatbot-chatwoot.service';
 import { ChatwootController } from './integrations/chatbot/chatwoot/controllers/chatwoot.controller';
 import { ChatwootService } from './integrations/chatbot/chatwoot/services/chatwoot.service';
 import { DifyController } from './integrations/chatbot/dify/controllers/dify.controller';
@@ -30,6 +29,7 @@ import { EvolutionBotController } from './integrations/chatbot/evolutionBot/cont
 import { EvolutionBotService } from './integrations/chatbot/evolutionBot/services/evolutionBot.service';
 import { FlowiseController } from './integrations/chatbot/flowise/controllers/flowise.controller';
 import { FlowiseService } from './integrations/chatbot/flowise/services/flowise.service';
+import { ChatbotManageController } from './integrations/chatbot/manage/controllers/chatbot-manage.controller';
 import { N8nController } from './integrations/chatbot/n8n/controllers/n8n.controller';
 import { N8nService } from './integrations/chatbot/n8n/services/n8n.service';
 import { OpenaiController } from './integrations/chatbot/openai/controllers/openai.controller';
