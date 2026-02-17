@@ -553,6 +553,10 @@ export class BaileysStartupService extends ChannelStartupService {
     }
   }
 
+  private getUpsertEmittedCacheKey(messageId: string) {
+    return `upsert_emitted_${this.instanceId}_${messageId}`;
+  }
+
   private async defineAuthState() {
     const db = this.configService.get<Database>('DATABASE');
     const cache = this.configService.get<CacheConf>('CACHE');
@@ -939,6 +943,14 @@ export class BaileysStartupService extends ChannelStartupService {
       progress?: number;
       syncType?: proto.HistorySync.HistorySyncType;
     }) => {
+      //These logs are crucial; when something changes in Baileys/WhatsApp, we can more easily understand what changed!
+      this.logger.debug('Messages abaixo');
+      this.logger.debug(messages);
+      this.logger.debug('Chats abaixo');
+      this.logger.debug(chats);
+      this.logger.debug('Contatos abaixo');
+      this.logger.debug(contacts);
+
       try {
         if (syncType === proto.HistorySync.HistorySyncType.ON_DEMAND) {
           console.log('received on-demand history sync, messages=', messages);
@@ -967,14 +979,29 @@ export class BaileysStartupService extends ChannelStartupService {
         }
 
         const contactsMap = new Map();
+        const contactsMapLidJid = new Map();
 
         for (const contact of contacts) {
-          if (contact.id && (contact.notify || contact.name)) {
-            contactsMap.set(contact.id, { name: contact.name ?? contact.notify, jid: contact.id });
+          let jid = null;
+
+          if (contact?.id?.search('@lid') !== -1) {
+            if (contact.phoneNumber) {
+              jid = contact.phoneNumber;
+            }
           }
+
+          if (!jid) {
+            jid = contact?.id;
+          }
+
+          if (contact.id && (contact.notify || contact.name)) {
+            contactsMap.set(contact.id, { name: contact.name ?? contact.notify, jid });
+          }
+
+          contactsMapLidJid.set(contact.id, { jid });
         }
 
-        const chatsRaw: { remoteJid: string; instanceId: string; name?: string }[] = [];
+        const chatsRaw: { remoteJid: string; remoteLid: string; instanceId: string; name?: string }[] = [];
         const chatsRepository = new Set(
           (await this.prismaRepository.chat.findMany({ where: { instanceId: this.instanceId } })).map(
             (chat) => chat.remoteJid,
@@ -986,13 +1013,31 @@ export class BaileysStartupService extends ChannelStartupService {
             continue;
           }
 
-          chatsRaw.push({ remoteJid: chat.id, instanceId: this.instanceId, name: chat.name });
+          let remoteJid = null;
+          let remoteLid = null;
+
+          if (chat.id.search('@lid') !== -1) {
+            remoteLid = chat.id;
+            if (contactsMapLidJid.has(chat.id)) {
+              remoteJid = contactsMapLidJid.get(chat.id).jid;
+            }
+          }
+
+          if (!remoteJid) {
+            remoteJid = chat.id;
+          }
+
+          chatsRaw.push({ remoteJid, remoteLid, instanceId: this.instanceId, name: chat.name });
         }
 
         this.sendDataWebhook(Events.CHATS_SET, chatsRaw);
 
         if (this.configService.get<Database>('DATABASE').SAVE_DATA.HISTORIC) {
-          await this.prismaRepository.chat.createMany({ data: chatsRaw, skipDuplicates: true });
+          const chatsToCreateMany = JSON.parse(JSON.stringify(chatsRaw)).map((chat) => {
+            delete chat.remoteLid;
+            return chat;
+          });
+          await this.prismaRepository.chat.createMany({ data: chatsToCreateMany, skipDuplicates: true });
         }
 
         const messagesRaw: any[] = [];
@@ -1389,50 +1434,49 @@ export class BaileysStartupService extends ChannelStartupService {
                 try {
                   if (isVideo && !this.configService.get<S3>('S3').SAVE_VIDEO) {
                     this.logger.warn('Video upload is disabled. Skipping video upload.');
-                    // Skip video upload by returning early from this block
-                    return;
-                  }
-
-                  const message: any = received;
-
-                  // Verificação adicional para garantir que há conteúdo de mídia real
-                  const hasRealMedia = this.hasValidMediaContent(message);
-
-                  if (!hasRealMedia) {
-                    this.logger.warn('Message detected as media but contains no valid media content');
                   } else {
-                    const media = await this.getBase64FromMediaMessage({ message }, true);
+                    const message: any = received;
 
-                    if (!media) {
-                      this.logger.verbose('No valid media to upload (messageContextInfo only), skipping MinIO');
-                      return;
+                    // Verificação adicional para garantir que há conteúdo de mídia real
+                    const hasRealMedia = this.hasValidMediaContent(message);
+
+                    if (!hasRealMedia) {
+                      this.logger.warn('Message detected as media but contains no valid media content');
+                    } else {
+                      const media = await this.getBase64FromMediaMessage({ message }, true);
+
+                      if (!media) {
+                        this.logger.verbose('No valid media to upload (messageContextInfo only), skipping MinIO');
+                      } else {
+                        const { buffer, mediaType, fileName, size } = media;
+                        const mimetype = mimeTypes.lookup(fileName).toString();
+                        const fullName = join(
+                          `${this.instance.id}`,
+                          received.key.remoteJid,
+                          mediaType,
+                          `${Date.now()}_${fileName}`,
+                        );
+                        await s3Service.uploadFile(fullName, buffer, size.fileLength?.low, {
+                          'Content-Type': mimetype,
+                        });
+
+                        await this.prismaRepository.media.create({
+                          data: {
+                            messageId: msg.id,
+                            instanceId: this.instanceId,
+                            type: mediaType,
+                            fileName: fullName,
+                            mimetype,
+                          },
+                        });
+
+                        const mediaUrl = await s3Service.getObjectUrl(fullName);
+
+                        messageRaw.message.mediaUrl = mediaUrl;
+
+                        await this.prismaRepository.message.update({ where: { id: msg.id }, data: messageRaw });
+                      }
                     }
-
-                    const { buffer, mediaType, fileName, size } = media;
-                    const mimetype = mimeTypes.lookup(fileName).toString();
-                    const fullName = join(
-                      `${this.instance.id}`,
-                      received.key.remoteJid,
-                      mediaType,
-                      `${Date.now()}_${fileName}`,
-                    );
-                    await s3Service.uploadFile(fullName, buffer, size.fileLength?.low, { 'Content-Type': mimetype });
-
-                    await this.prismaRepository.media.create({
-                      data: {
-                        messageId: msg.id,
-                        instanceId: this.instanceId,
-                        type: mediaType,
-                        fileName: fullName,
-                        mimetype,
-                      },
-                    });
-
-                    const mediaUrl = await s3Service.getObjectUrl(fullName);
-
-                    messageRaw.message.mediaUrl = mediaUrl;
-
-                    await this.prismaRepository.message.update({ where: { id: msg.id }, data: messageRaw });
                   }
                 } catch (error) {
                   this.logger.error(['Error on upload file to minio', error?.message, error?.stack]);
@@ -1478,9 +1522,11 @@ export class BaileysStartupService extends ChannelStartupService {
           if (messageRaw.key.remoteJid?.includes('@lid') && messageRaw.key.remoteJidAlt) {
             messageRaw.key.remoteJid = messageRaw.key.remoteJidAlt;
           }
-          console.log(messageRaw);
+          await this.sendDataWebhook(Events.MESSAGES_UPSERT, messageRaw);
 
-          this.sendDataWebhook(Events.MESSAGES_UPSERT, messageRaw);
+          if (messageRaw.messageType === 'audioMessage' && !messageRaw.key.fromMe && messageRaw.key.id) {
+            await this.baileysCache.set(this.getUpsertEmittedCacheKey(messageRaw.key.id), true, 60 * 10);
+          }
 
           await chatbotController.emit({
             instance: { instanceName: this.instance.name, instanceId: this.instanceId },
@@ -1649,6 +1695,37 @@ export class BaileysStartupService extends ChannelStartupService {
               this.logger.warn(`Original message not found for update. Skipping. Key: ${JSON.stringify(key)}`);
               continue;
             }
+
+            if (!key.fromMe && findMessage.messageType === 'audioMessage' && key.id) {
+              const upsertCacheKey = this.getUpsertEmittedCacheKey(key.id);
+              const alreadyEmitted = await this.baileysCache.get(upsertCacheKey);
+
+              if (!alreadyEmitted) {
+                const fallbackUpsertPayload = {
+                  key: findMessage.key,
+                  pushName: findMessage.pushName,
+                  status: findMessage.status,
+                  message: findMessage.message,
+                  contextInfo: findMessage.contextInfo,
+                  messageType: findMessage.messageType,
+                  messageTimestamp: findMessage.messageTimestamp,
+                  instanceId: findMessage.instanceId,
+                  source: findMessage.source,
+                };
+
+                try {
+                  await this.sendDataWebhook(Events.MESSAGES_UPSERT, fallbackUpsertPayload);
+                  await this.baileysCache.set(upsertCacheKey, true, 60 * 10);
+                  this.logger.warn(`Fallback messages.upsert emitted for audio message ${key.id}`);
+                } catch (error) {
+                  this.logger.error([
+                    `Failed to emit fallback messages.upsert for audio message ${key.id}`,
+                    error?.message,
+                  ]);
+                }
+              }
+            }
+
             message.messageId = findMessage.id;
           }
 
