@@ -567,12 +567,27 @@ export class BaileysStartupService extends ChannelStartupService {
 
   private async getMessage(key: proto.IMessageKey, full = false) {
     try {
-      // Use raw SQL to avoid JSON path issues
-      const webMessageInfo = (await this.prismaRepository.$queryRaw`
-        SELECT * FROM "Message"
-        WHERE "instanceId" = ${this.instanceId}
-        AND "key"->>'id' = ${key.id}
-      `) as proto.IWebMessageInfo[];
+      const provider = this.configService.get<Database>('DATABASE').PROVIDER;
+
+      let webMessageInfo: proto.IWebMessageInfo[];
+
+      if (provider === 'mysql') {
+        // MySQL version
+        webMessageInfo = (await this.prismaRepository.$queryRaw`
+          SELECT * FROM Message
+          WHERE instanceId = ${this.instanceId}
+          AND JSON_UNQUOTE(JSON_EXTRACT(\`key\`, '$.id')) = ${key.id}
+          LIMIT 1
+        `) as proto.IWebMessageInfo[];
+      } else {
+        // PostgreSQL version
+        webMessageInfo = (await this.prismaRepository.$queryRaw`
+          SELECT * FROM "Message"
+          WHERE "instanceId" = ${this.instanceId}
+          AND "key"->>'id' = ${key.id}
+          LIMIT 1
+        `) as proto.IWebMessageInfo[];
+      }
 
       if (full) {
         return webMessageInfo[0];
@@ -1687,29 +1702,25 @@ export class BaileysStartupService extends ChannelStartupService {
             }
 
             const searchId = originalMessageId || key.id;
+            const dbProvider = this.configService.get<Database>('DATABASE').PROVIDER;
 
-            let retries = 0;
-            const maxRetries = 3;
-            const retryDelay = 500; // 500ms delay to avoid blocking for too long
-
-            while (retries < maxRetries) {
-              const messages = (await this.prismaRepository.$queryRaw`
+            let messages: any[];
+            if (dbProvider === 'mysql') {
+              messages = (await this.prismaRepository.$queryRaw`
+                SELECT * FROM Message
+                WHERE instanceId = ${this.instanceId}
+                AND JSON_UNQUOTE(JSON_EXTRACT(\`key\`, '$.id')) = ${searchId}
+                LIMIT 1
+              `) as any[];
+            } else {
+              messages = (await this.prismaRepository.$queryRaw`
                 SELECT * FROM "Message"
                 WHERE "instanceId" = ${this.instanceId}
                 AND "key"->>'id' = ${searchId}
                 LIMIT 1
               `) as any[];
-              findMessage = messages[0] || null;
-
-              if (findMessage?.id) {
-                break;
-              }
-
-              retries++;
-              if (retries < maxRetries) {
-                await delay(retryDelay);
-              }
             }
+            findMessage = messages[0] || null;
 
             if (!findMessage?.id) {
               this.logger.verbose(
@@ -4835,16 +4846,32 @@ export class BaileysStartupService extends ChannelStartupService {
   private async updateMessagesReadedByTimestamp(remoteJid: string, timestamp?: number): Promise<number> {
     if (timestamp === undefined || timestamp === null) return 0;
 
-    // Use raw SQL to avoid JSON path issues
-    const result = await this.prismaRepository.$executeRaw`
-      UPDATE "Message"
-      SET "status" = ${status[4]}
-      WHERE "instanceId" = ${this.instanceId}
-      AND "key"->>'remoteJid' = ${remoteJid}
-      AND ("key"->>'fromMe')::boolean = false
-      AND "messageTimestamp" <= ${timestamp}
-      AND ("status" IS NULL OR "status" = ${status[3]})
-    `;
+    const provider = this.configService.get<Database>('DATABASE').PROVIDER;
+    let result: number;
+
+    if (provider === 'mysql') {
+      // MySQL version
+      result = await this.prismaRepository.$executeRaw`
+        UPDATE Message
+        SET status = ${status[4]}
+        WHERE instanceId = ${this.instanceId}
+        AND JSON_UNQUOTE(JSON_EXTRACT(\`key\`, '$.remoteJid')) = ${remoteJid}
+        AND JSON_UNQUOTE(JSON_EXTRACT(\`key\`, '$.fromMe')) = 'false'
+        AND messageTimestamp <= ${timestamp}
+        AND (status IS NULL OR status = ${status[3]})
+      `;
+    } else {
+      // PostgreSQL version
+      result = await this.prismaRepository.$executeRaw`
+        UPDATE "Message"
+        SET "status" = ${status[4]}
+        WHERE "instanceId" = ${this.instanceId}
+        AND "key"->>'remoteJid' = ${remoteJid}
+        AND ("key"->>'fromMe')::boolean = false
+        AND "messageTimestamp" <= ${timestamp}
+        AND ("status" IS NULL OR "status" = ${status[3]})
+      `;
+    }
 
     if (result) {
       if (result > 0) {
@@ -4858,16 +4885,33 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   private async updateChatUnreadMessages(remoteJid: string): Promise<number> {
-    const [chat, unreadMessages] = await Promise.all([
-      this.prismaRepository.chat.findFirst({ where: { remoteJid } }),
-      // Use raw SQL to avoid JSON path issues
-      this.prismaRepository.$queryRaw`
+    const provider = this.configService.get<Database>('DATABASE').PROVIDER;
+
+    let unreadMessagesPromise: Promise<number>;
+
+    if (provider === 'mysql') {
+      // MySQL version
+      unreadMessagesPromise = this.prismaRepository.$queryRaw`
+        SELECT COUNT(*) as count FROM Message
+        WHERE instanceId = ${this.instanceId}
+        AND JSON_UNQUOTE(JSON_EXTRACT(\`key\`, '$.remoteJid')) = ${remoteJid}
+        AND JSON_UNQUOTE(JSON_EXTRACT(\`key\`, '$.fromMe')) = 'false'
+        AND status = ${status[3]}
+      `.then((result: any[]) => Number(result[0]?.count) || 0);
+    } else {
+      // PostgreSQL version
+      unreadMessagesPromise = this.prismaRepository.$queryRaw`
         SELECT COUNT(*)::int as count FROM "Message"
         WHERE "instanceId" = ${this.instanceId}
         AND "key"->>'remoteJid' = ${remoteJid}
         AND ("key"->>'fromMe')::boolean = false
         AND "status" = ${status[3]}
-      `.then((result: any[]) => result[0]?.count || 0),
+      `.then((result: any[]) => result[0]?.count || 0);
+    }
+
+    const [chat, unreadMessages] = await Promise.all([
+      this.prismaRepository.chat.findFirst({ where: { remoteJid } }),
+      unreadMessagesPromise,
     ]);
 
     if (chat && chat.unreadMessages !== unreadMessages) {
@@ -4879,50 +4923,95 @@ export class BaileysStartupService extends ChannelStartupService {
 
   private async addLabel(labelId: string, instanceId: string, chatId: string) {
     const id = cuid();
+    const provider = this.configService.get<Database>('DATABASE').PROVIDER;
 
-    await this.prismaRepository.$executeRawUnsafe(
-      `INSERT INTO "Chat" ("id", "instanceId", "remoteJid", "labels", "createdAt", "updatedAt")
-       VALUES ($4, $2, $3, to_jsonb(ARRAY[$1]::text[]), NOW(), NOW()) ON CONFLICT ("instanceId", "remoteJid")
-     DO
-      UPDATE
-          SET "labels" = (
-          SELECT to_jsonb(array_agg(DISTINCT elem))
-          FROM (
-          SELECT jsonb_array_elements_text("Chat"."labels") AS elem
-          UNION
-          SELECT $1::text AS elem
-          ) sub
-          ),
-          "updatedAt" = NOW();`,
-      labelId,
-      instanceId,
-      chatId,
-      id,
-    );
+    if (provider === 'mysql') {
+      // MySQL version - use INSERT ... ON DUPLICATE KEY UPDATE
+      await this.prismaRepository.$executeRawUnsafe(
+        `INSERT INTO Chat (id, instanceId, remoteJid, labels, createdAt, updatedAt)
+         VALUES (?, ?, ?, JSON_ARRAY(?), NOW(), NOW())
+         ON DUPLICATE KEY UPDATE
+           labels = JSON_ARRAY_APPEND(
+             COALESCE(labels, JSON_ARRAY()),
+             '$',
+             ?
+           ),
+           updatedAt = NOW()`,
+        id,
+        instanceId,
+        chatId,
+        labelId,
+        labelId,
+      );
+    } else {
+      // PostgreSQL version
+      await this.prismaRepository.$executeRawUnsafe(
+        `INSERT INTO "Chat" ("id", "instanceId", "remoteJid", "labels", "createdAt", "updatedAt")
+         VALUES ($4, $2, $3, to_jsonb(ARRAY[$1]::text[]), NOW(), NOW()) ON CONFLICT ("instanceId", "remoteJid")
+       DO
+        UPDATE
+            SET "labels" = (
+            SELECT to_jsonb(array_agg(DISTINCT elem))
+            FROM (
+            SELECT jsonb_array_elements_text("Chat"."labels") AS elem
+            UNION
+            SELECT $1::text AS elem
+            ) sub
+            ),
+            "updatedAt" = NOW();`,
+        labelId,
+        instanceId,
+        chatId,
+        id,
+      );
+    }
   }
 
   private async removeLabel(labelId: string, instanceId: string, chatId: string) {
     const id = cuid();
+    const provider = this.configService.get<Database>('DATABASE').PROVIDER;
 
-    await this.prismaRepository.$executeRawUnsafe(
-      `INSERT INTO "Chat" ("id", "instanceId", "remoteJid", "labels", "createdAt", "updatedAt")
-       VALUES ($4, $2, $3, '[]'::jsonb, NOW(), NOW()) ON CONFLICT ("instanceId", "remoteJid")
-     DO
-      UPDATE
-          SET "labels" = COALESCE (
-          (
-          SELECT jsonb_agg(elem)
-          FROM jsonb_array_elements_text("Chat"."labels") AS elem
-          WHERE elem <> $1
-          ),
-          '[]'::jsonb
-          ),
-          "updatedAt" = NOW();`,
-      labelId,
-      instanceId,
-      chatId,
-      id,
-    );
+    if (provider === 'mysql') {
+      // MySQL version - use INSERT ... ON DUPLICATE KEY UPDATE
+      await this.prismaRepository.$executeRawUnsafe(
+        `INSERT INTO Chat (id, instanceId, remoteJid, labels, createdAt, updatedAt)
+         VALUES (?, ?, ?, JSON_ARRAY(), NOW(), NOW())
+         ON DUPLICATE KEY UPDATE
+           labels = COALESCE(
+             JSON_REMOVE(
+               labels,
+               JSON_UNQUOTE(JSON_SEARCH(labels, 'one', ?))
+             ),
+             JSON_ARRAY()
+           ),
+           updatedAt = NOW()`,
+        id,
+        instanceId,
+        chatId,
+        labelId,
+      );
+    } else {
+      // PostgreSQL version
+      await this.prismaRepository.$executeRawUnsafe(
+        `INSERT INTO "Chat" ("id", "instanceId", "remoteJid", "labels", "createdAt", "updatedAt")
+         VALUES ($4, $2, $3, '[]'::jsonb, NOW(), NOW()) ON CONFLICT ("instanceId", "remoteJid")
+       DO
+        UPDATE
+            SET "labels" = COALESCE (
+            (
+            SELECT jsonb_agg(elem)
+            FROM jsonb_array_elements_text("Chat"."labels") AS elem
+            WHERE elem <> $1
+            ),
+            '[]'::jsonb
+            ),
+            "updatedAt" = NOW();`,
+        labelId,
+        instanceId,
+        chatId,
+        id,
+      );
+    }
   }
 
   public async baileysOnWhatsapp(jid: string) {

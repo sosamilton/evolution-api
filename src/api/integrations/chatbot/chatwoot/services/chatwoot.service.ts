@@ -1617,18 +1617,36 @@ export class ChatwootService {
       return;
     }
 
-    // Use raw SQL to avoid JSON path issues
-    const result = await this.prismaRepository.$executeRaw`
-      UPDATE "Message" 
-      SET 
-        "chatwootMessageId" = ${chatwootMessageIds.messageId},
-        "chatwootConversationId" = ${chatwootMessageIds.conversationId},
-        "chatwootInboxId" = ${chatwootMessageIds.inboxId},
-        "chatwootContactInboxSourceId" = ${chatwootMessageIds.contactInboxSourceId},
-        "chatwootIsRead" = ${chatwootMessageIds.isRead || false}
-      WHERE "instanceId" = ${instance.instanceId} 
-      AND "key"->>'id' = ${key.id}
-    `;
+    const provider = this.configService.get<Database>('DATABASE').PROVIDER;
+    let result: number;
+
+    if (provider === 'mysql') {
+      // MySQL version
+      result = await this.prismaRepository.$executeRaw`
+        UPDATE Message
+        SET
+          chatwootMessageId = ${chatwootMessageIds.messageId},
+          chatwootConversationId = ${chatwootMessageIds.conversationId},
+          chatwootInboxId = ${chatwootMessageIds.inboxId},
+          chatwootContactInboxSourceId = ${chatwootMessageIds.contactInboxSourceId},
+          chatwootIsRead = ${chatwootMessageIds.isRead || false}
+        WHERE instanceId = ${instance.instanceId}
+        AND JSON_UNQUOTE(JSON_EXTRACT(\`key\`, '$.id')) = ${key.id}
+      `;
+    } else {
+      // PostgreSQL version
+      result = await this.prismaRepository.$executeRaw`
+        UPDATE "Message"
+        SET
+          "chatwootMessageId" = ${chatwootMessageIds.messageId},
+          "chatwootConversationId" = ${chatwootMessageIds.conversationId},
+          "chatwootInboxId" = ${chatwootMessageIds.inboxId},
+          "chatwootContactInboxSourceId" = ${chatwootMessageIds.contactInboxSourceId},
+          "chatwootIsRead" = ${chatwootMessageIds.isRead || false}
+        WHERE "instanceId" = ${instance.instanceId}
+        AND "key"->>'id' = ${key.id}
+      `;
+    }
 
     this.logger.verbose(`Update result: ${result} rows affected`);
 
@@ -1642,15 +1660,28 @@ export class ChatwootService {
   }
 
   private async getMessageByKeyId(instance: InstanceDto, keyId: string): Promise<MessageModel> {
-    // Use raw SQL query to avoid JSON path issues with Prisma
-    const messages = await this.prismaRepository.$queryRaw`
-      SELECT * FROM "Message" 
-      WHERE "instanceId" = ${instance.instanceId} 
-      AND "key"->>'id' = ${keyId}
-      LIMIT 1
-    `;
+    const provider = this.configService.get<Database>('DATABASE').PROVIDER;
+    let messages: MessageModel[];
 
-    return (messages as MessageModel[])[0] || null;
+    if (provider === 'mysql') {
+      // MySQL version
+      messages = await this.prismaRepository.$queryRaw`
+        SELECT * FROM Message
+        WHERE instanceId = ${instance.instanceId}
+        AND JSON_UNQUOTE(JSON_EXTRACT(\`key\`, '$.id')) = ${keyId}
+        LIMIT 1
+      `;
+    } else {
+      // PostgreSQL version
+      messages = await this.prismaRepository.$queryRaw`
+        SELECT * FROM "Message"
+        WHERE "instanceId" = ${instance.instanceId}
+        AND "key"->>'id' = ${keyId}
+        LIMIT 1
+      `;
+    }
+
+    return messages[0] || null;
   }
 
   private async getReplyToIds(
